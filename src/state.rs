@@ -1,7 +1,7 @@
 use std::{usize};
 
 use io::{BufRead, Read};
-use termion::input::TermRead;
+
 
 use crate::userinput::{Event, Key};
 
@@ -112,11 +112,8 @@ impl State {
                 }
                 
                 if c == '\n' {
-                    // if l.content.len() > cur_col+1 {
-                        let rest_of_line = l.content.split_off(cur_col);
-                        self.lines.insert(cur_ln + 1, Line::from(rest_of_line));
-                    // }
-
+                    let rest_of_line = l.content.split_off(cur_col);
+                    self.lines.insert(cur_ln + 1, Line::from(rest_of_line));
                     self.cursor_pos.line_number += 1;
                     self.cursor_pos.colmun = 0;
                 } else {
