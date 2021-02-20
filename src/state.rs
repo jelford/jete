@@ -1,4 +1,4 @@
-use std::{io::Stderr, process::abort, usize};
+use std::{usize};
 
 use crate::userinput::{Event, Key};
 

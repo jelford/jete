@@ -1,12 +1,13 @@
-use clear::CurrentLine;
-use cursor::Goto;
+
+
 use termion::{clear, cursor, input::{Events, MouseTerminal, TermRead}, raw::{IntoRawMode, RawTerminal}};
-use std::{convert::TryInto, io::{Stdin, Stdout, stdin, stdout, Write}, usize};
+use std::{io::{Stdin, Stdout, stdin, stdout, Write}, usize};
 use crate::display::Display;
 use crate::state::{State, Mode};
 use crate::userinput::{UserInputSource, Event};
 
 pub fn terminal_display() -> (TerminalDisplay, TerminalInput) {
+    assert!(termion::is_tty(&0) && termion::is_tty(&1), "Not in a terminal");
     let mut stdout = MouseTerminal::from(stdout().into_raw_mode().expect("Unable to set terminal to raw mode... is this a tty?"));
     let stdin = stdin();
 
@@ -64,7 +65,7 @@ impl Display for TerminalDisplay {
                 command_text_disp
             ).unwrap();
 
-            
+
         } else {
             let status_text = state.status_text();
             let status_text_disp = &status_text[..status_text.len().min(w as usize - 1)];
