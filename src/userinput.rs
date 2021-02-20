@@ -1,5 +1,5 @@
 
+pub use termion::event::{Event, Key, MouseEvent};
 pub trait UserInputSource {
-    type InputEventType;
-    fn events(&mut self) -> &mut Self::InputEventType;
+    fn events(&mut self) -> &mut dyn Iterator<Item=Event>;
 }
