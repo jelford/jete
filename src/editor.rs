@@ -1,11 +1,10 @@
 use crate::display::Display;
 use crate::userinput::{UserInputSource};
-use crate::state::{self, EditorAction};
+use crate::state::{self, EditorAction, State};
 
 
 
-pub fn run<Disp: Display, Inputs: UserInputSource>(mut d: Disp, mut i: Inputs) {
-    let mut s = state::empty();
+pub fn run<Disp: Display, Inputs: UserInputSource>(mut s: State, mut d: Disp, mut i: Inputs) {
     
     d.update(&s);
 

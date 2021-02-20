@@ -1,5 +1,8 @@
 use std::{usize};
 
+use io::{BufRead, Read};
+use termion::input::TermRead;
+
 use crate::userinput::{Event, Key};
 
 pub struct Line {
@@ -202,4 +205,37 @@ pub fn empty() -> State {
         mode: Mode::Normal,
         command_line: String::new(),
     }
+}
+
+use std::ffi::OsStr;
+use std::fs::{OpenOptions};
+use std::io::{self, BufReader};
+
+pub fn from_file(fname: &OsStr) -> io::Result<State> {
+    println!("opening {:?}", fname);
+
+    let f = 
+        OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .open(fname)?;
+    let reader = BufReader::new(f);
+    let mut lines = Vec::new();
+
+    for l in reader.lines() {
+        let l = l?;
+        lines.push(Line::from(l));
+    }
+
+    Ok(State{
+        cursor_pos: CursorPos {
+            line_number: 0,
+            colmun: 0,
+        },
+        lines,
+        status_text: String::new(),
+        mode: Mode::Normal,
+        command_line: String::new(),
+    })
 }
