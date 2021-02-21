@@ -4,7 +4,7 @@ use jete::terminal::terminal_display;
 use std::env;
 
 fn main() {
-    let mut args = env::args_os().into_iter();
+    let mut args = env::args_os();
     args.next().unwrap(); // safe: just the process name
 
     let state = match args.next() {

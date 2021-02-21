@@ -6,9 +6,8 @@ pub fn run<Disp: Display, Inputs: UserInputSource>(mut s: State, mut d: Disp, mu
     d.update(&s);
 
     for e in i.events() {
-        match s.dispatch(e) {
-            EditorAction::Quit => break,
-            _ => {}
+        if let EditorAction::Quit = s.dispatch(e) {
+            break;
         }
 
         d.update(&s);

@@ -168,18 +168,13 @@ impl<'a> State {
         let cur_col = self.cursor_pos.colmun;
         if cur_col > 0 {
             let line = self.lines.get_mut(self.cursor_pos.line_number);
-            let line = if line.is_none() {
-                return;
-            } else {
-                line.unwrap()
-            };
-            line.content.remove(cur_col - 1);
-            self.cursor_pos.colmun = self.cursor_pos.colmun.saturating_sub(1);
+            if let Some(line) = line {
+                line.content.remove(cur_col - 1);
+                self.cursor_pos.colmun = self.cursor_pos.colmun.saturating_sub(1);
+            }
         } else {
             let cur_row = self.cursor_pos.line_number;
-            if cur_row == 0 {
-                return;
-            } else {
+            if cur_row > 0 {
                 let end_of_prev_line = {
                     let (prev, cur) = self.lines[cur_row - 1..=cur_row].split_at_mut(1);
                     let prev_line_len = prev[0].content.len();

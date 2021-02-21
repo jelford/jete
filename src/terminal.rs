@@ -50,7 +50,7 @@ impl Display for TerminalDisplay {
     fn update(&mut self, state: &State) {
         let (w, h) = termion::terminal_size().expect("unable to check terminal dimensions");
 
-        let lines_at_bottom = 2 as u16;
+        let lines_at_bottom = 2u16;
         let text_view_height = h - lines_at_bottom;
         let cursor_pos = state.cursor_pos();
 
