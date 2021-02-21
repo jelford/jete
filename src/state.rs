@@ -1,4 +1,6 @@
-use io::{BufRead, BufWriter, Seek, SeekFrom, Write};
+use std::ffi::OsStr;
+use std::fs::OpenOptions;
+use std::io::{self, BufReader, BufRead, BufWriter, Seek, SeekFrom, Write};
 use std::{fs::File, usize};
 
 use crate::userinput::{Event, Key};
@@ -56,39 +58,76 @@ pub enum EditorAction {
     None,
 }
 
-impl<'a> State {
-    pub fn dispatch(&'a mut self, e: Event) -> EditorAction {
-        match self.mode {
-            Mode::Insert => match e {
-                Event::Key(k) => match k {
-                    Key::Esc => self.shift_mode(Mode::Normal),
-                    Key::Backspace => self.delete(),
-                    Key::Char(c) => self.insert(c),
-                    _ => {}
-                },
+pub enum Command {
+    ShiftMode(Mode),
+    DeleteAtCursor,
+    InsertAtCursor(char),
+    CommitCommandline,
+    MoveCursor {
+        lines_down: isize,
+        columns_right: isize,
+    }
+}
 
+pub fn input_map(current_mode: &Mode, e: Event) -> Option<Command> {
+    match current_mode {
+        Mode::Insert => match e {
+            Event::Key(k) => match k {
+                Key::Esc => Some(Command::ShiftMode(Mode::Normal)),
+                Key::Backspace => Some(Command::DeleteAtCursor),
+                Key::Char(c) => Some(Command::InsertAtCursor(c)),
+                _ => None,
+            },
+
+            _ => None,
+        },
+        Mode::Command => match e {
+            Event::Key(k) => match k {
+                Key::Esc => Some(Command::ShiftMode(Mode::Normal)),
+                Key::Char('\n') => Some(Command::CommitCommandline),
+                Key::Backspace => Some(Command::DeleteAtCursor),
+                Key::Char(c) => Some(Command::InsertAtCursor(c)),
+                _ => None
+            },
+            _ => None
+        },
+        Mode::Normal => match e {
+            Event::Key(k) => match k {
+                Key::Char('u') => Some(Command::MoveCursor { lines_down: -1, columns_right: 0}),
+                Key::Char('o') => Some(Command::MoveCursor { lines_down: 0, columns_right: 1}),
+                Key::Char('e') => Some(Command::MoveCursor { lines_down: 1, columns_right: 0}),
+                Key::Char('n') => Some(Command::MoveCursor { lines_down: 0, columns_right: -1}),
+                Key::Char(':') => Some(Command::ShiftMode(Mode::Command)),
+                Key::Char('i') => Some(Command::ShiftMode(Mode::Insert)),
+                _ => None
+            },
+            _ => None
+        },
+        _ => None
+    }
+}
+
+impl<'a> State {
+    pub fn dispatch(&'a mut self, c: Command) -> EditorAction {
+        if let Command::ShiftMode(m) = c {
+            self.shift_mode(m);
+            return EditorAction::None;
+        } 
+
+        match self.mode {
+            Mode::Insert => match c {
+                Command::DeleteAtCursor => self.delete(),
+                Command::InsertAtCursor(c) => self.insert(c),
                 _ => {}
             },
-            Mode::Command => match e {
-                Event::Key(k) => match k {
-                    Key::Esc => self.shift_mode(Mode::Normal),
-                    Key::Char('\n') => return self.commit_command(),
-                    Key::Backspace => self.delete(),
-                    Key::Char(k) => self.insert(k),
-                    _ => {}
-                },
+            Mode::Command => match c {
+                Command::DeleteAtCursor => self.delete(),
+                Command::InsertAtCursor(c) => self.insert(c),
+                Command::CommitCommandline => return self.commit_command(),
                 _ => {}
             },
-            Mode::Normal => match e {
-                Event::Key(k) => match k {
-                    Key::Char('u') => self.move_cursor((-1, 0)),
-                    Key::Char('o') => self.move_cursor((0, 1)),
-                    Key::Char('e') => self.move_cursor((1, 0)),
-                    Key::Char('n') => self.move_cursor((0, -1)),
-                    Key::Char(':') => self.shift_mode(Mode::Command),
-                    Key::Char('i') => self.shift_mode(Mode::Insert),
-                    _ => {}
-                },
+            Mode::Normal => match c {
+                Command::MoveCursor { lines_down, columns_right} => self.move_cursor((lines_down, columns_right)),
                 _ => {}
             },
         };
@@ -243,7 +282,7 @@ impl<'a> State {
         self.command_line.clear();
     }
 
-    pub fn move_cursor(&mut self, direction: (i8, i8)) {
+    pub fn move_cursor(&mut self, direction: (isize, isize)) {
         match direction {
             (0, 0) => {}
             (ln, 0) => {
@@ -252,7 +291,7 @@ impl<'a> State {
                 } else {
                     self.cursor_pos
                         .line_number
-                        .saturating_sub(ln.abs() as usize)
+                        .saturating_sub(ln.saturating_abs() as usize)
                 }
                 .clamp(0, self.lines.len().saturating_sub(1));
 
@@ -317,10 +356,6 @@ pub fn empty<'a>() -> State {
         file: None,
     }
 }
-
-use std::ffi::OsStr;
-use std::fs::OpenOptions;
-use std::io::{self, BufReader};
 
 pub fn from_file(fname: &OsStr) -> io::Result<State> {
     println!("opening {:?}", fname);
