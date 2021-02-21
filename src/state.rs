@@ -220,23 +220,29 @@ impl<'a> State {
                 }
                 .clamp(0, self.lines.len());
 
-                let line = &self.lines[self.cursor_pos.line_number];
-                self.cursor_pos.colmun = self.cursor_pos.colmun.clamp(0, line.content.len());
+                let line = self.lines.get(self.cursor_pos.line_number);
+                self.cursor_pos.colmun = if let Some(line) = line {
+                    self.cursor_pos.colmun.clamp(0, line.content.len())
+                } else {
+                    0
+                };
             }
             (0, col) => {
-                let line = &self.lines[self.cursor_pos.line_number];
-                if !col.is_negative() {
-                    self.cursor_pos.colmun = self
-                        .cursor_pos
-                        .colmun
-                        .saturating_add(col as usize)
-                        .clamp(0, line.content.len());
-                } else {
-                    self.cursor_pos.colmun = self
-                        .cursor_pos
-                        .colmun
-                        .saturating_sub(col.abs() as usize)
-                        .clamp(0, line.content.len());
+                let line = self.lines.get(self.cursor_pos.line_number);
+                if let Some(line) = line {
+                    if !col.is_negative() {
+                        self.cursor_pos.colmun = self
+                            .cursor_pos
+                            .colmun
+                            .saturating_add(col as usize)
+                            .clamp(0, line.content.len());
+                    } else {
+                        self.cursor_pos.colmun = self
+                            .cursor_pos
+                            .colmun
+                            .saturating_sub(col.abs() as usize)
+                            .clamp(0, line.content.len());
+                    }
                 }
             }
 
