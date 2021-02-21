@@ -1,6 +1,4 @@
 
-
-use env::args_os;
 use jete::terminal::terminal_display;
 use jete::editor;
 use jete::state;
