@@ -1,10 +1,11 @@
-use std::{usize};
 
-use io::{BufRead, Read};
 
+use io::{BufRead, BufWriter, Seek, SeekFrom, Write};
+use std::fs::File;
 
 use crate::userinput::{Event, Key};
 
+#[derive(Clone)]
 pub struct Line {
     content: String,
 }
@@ -30,6 +31,7 @@ pub struct State {
     status_text: String,
     mode: Mode,
     command_line: String,
+    file: Option<File>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -44,8 +46,8 @@ pub enum EditorAction {
     None,
 }
 
-impl State {
-    pub fn dispatch(&mut self, e: Event) -> EditorAction {
+impl <'a> State {
+    pub fn dispatch(&'a mut self, e: Event) -> EditorAction {
         match self.mode {
             Mode::Insert => {
                 match e {
@@ -110,6 +112,8 @@ impl State {
                 while l.content.len() < cur_col {
                     l.content.push(' ');
                 }
+
+                assert!(cur_col <= l.content.len());
                 
                 if c == '\n' {
                     let rest_of_line = l.content.split_off(cur_col);
@@ -117,8 +121,8 @@ impl State {
                     self.cursor_pos.line_number += 1;
                     self.cursor_pos.colmun = 0;
                 } else {
+                    l.content.insert(cur_col.min(l.content.len()), c);
                     self.cursor_pos.colmun += 1;
-                    l.content.insert((self.cursor_pos.colmun.saturating_sub(1)).min(l.content.len()), c);
                 }
 
                 self.status_text = format!("inserted char: {}", if c != '\n' { c } else { '\0' });
@@ -135,16 +139,31 @@ impl State {
         }
     }
 
-    fn commit_command(&mut self) -> EditorAction {
+    fn commit_command(&'a mut self) -> EditorAction {
         let action = self.command_line.clone();
         self.shift_mode(Mode::Normal);
         if action == "q" {
             EditorAction::Quit
+        } else if action == "w" {
+            self.write();
+            EditorAction::None
         } else {
             EditorAction::None
         }
+    }
 
-        
+    fn write(&mut self) {
+        if let Some(ref mut f) = self.file {
+            f.seek(SeekFrom::Start(0)).expect("seeking to start of file");
+            let num_lines = self.lines.len();
+            let mut writer = BufWriter::new(f);
+            for (i, l) in self.lines.iter().enumerate() {
+                let _ = writer.write_all(l.content.as_bytes());
+                if i+1 < num_lines {
+                    let _ = writer.write(b"\n");
+                }
+            }
+        }
     }
 
     pub fn line_text(&self, line_number: usize) -> Option<&str> {
@@ -191,16 +210,17 @@ impl State {
     }
 }
 
-pub fn empty() -> State {
+pub fn empty<'a>() -> State {
     State{
         cursor_pos: CursorPos {
             line_number: 0,
             colmun: 0,
         },
-        lines: vec![],
+        lines: Vec::new(),
         status_text: String::new(),
         mode: Mode::Normal,
         command_line: String::new(),
+        file: None,
     }
 }
 
@@ -217,7 +237,7 @@ pub fn from_file(fname: &OsStr) -> io::Result<State> {
                     .write(true)
                     .create(true)
                     .open(fname)?;
-    let reader = BufReader::new(f);
+    let reader = BufReader::new(f.try_clone().expect("Unable to clone file handle for reading"));
     let mut lines = Vec::new();
 
     for l in reader.lines() {
@@ -234,5 +254,6 @@ pub fn from_file(fname: &OsStr) -> io::Result<State> {
         status_text: String::new(),
         mode: Mode::Normal,
         command_line: String::new(),
+        file: Some(f),
     })
 }

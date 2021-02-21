@@ -109,12 +109,12 @@ impl Iterator for TerminalInput {
 
 impl Drop for TerminalDisplay {
     fn drop(&mut self) {
-        let _ = write!(
-            self.stdout,
-            "{}{}",
-            cursor::Goto(1, 1),
-            clear::AfterCursor
-        );
-        let _ = self.stdout.flush();
+        // let _ = write!(
+        //     self.stdout,
+        //     "{}{}",
+        //     cursor::Goto(1, 1),
+        //     clear::AfterCursor
+        // );
+        // let _ = self.stdout.flush();
     }
 }
