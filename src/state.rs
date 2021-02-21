@@ -174,19 +174,25 @@ impl<'a> State {
             }
         } else {
             let cur_row = self.cursor_pos.line_number;
-            if cur_row > 0 {
-                let end_of_prev_line = {
-                    let (prev, cur) = self.lines[cur_row - 1..=cur_row].split_at_mut(1);
-                    let prev_line_len = prev[0].content.len();
+            if cur_row <= 0 {
+                return;
+            }
+            
+            let end_of_prev_line = self.lines.get(cur_row-1).map(|l| l.content.len()).unwrap_or(0);
+
+            {
+                let prev_and_cur_row = self.lines.get_mut(cur_row - 1..=cur_row);
+                if let Some(prev_and_cur_row) = prev_and_cur_row {
+                    let (prev, cur) = prev_and_cur_row.split_at_mut(1);
                     prev[0].content.append(&mut cur[0].content);
                     self.lines.remove(cur_row);
-                    prev_line_len
-                };
-
-                let new_row = cur_row - 1;
-                self.cursor_pos.line_number = new_row;
-                self.cursor_pos.colmun = end_of_prev_line;
+                }
             }
+
+            let new_row = cur_row - 1;
+            self.cursor_pos.line_number = new_row;
+            self.cursor_pos.colmun = end_of_prev_line;
+        
         };
     }
 
@@ -218,7 +224,7 @@ impl<'a> State {
                         .line_number
                         .saturating_sub(ln.abs() as usize)
                 }
-                .clamp(0, self.lines.len());
+                .clamp(0, self.lines.len().saturating_sub(1));
 
                 let line = self.lines.get(self.cursor_pos.line_number);
                 self.cursor_pos.colmun = if let Some(line) = line {
