@@ -64,6 +64,7 @@ impl <'a> State {
                     Event::Key(k) => {
                         match k {
                             Key::Esc => self.shift_mode(Mode::Normal),
+                            Key::Backspace => self.delete(),
                             Key::Char(c) => self.insert(c),
                             _ => {}
                         }
@@ -170,6 +171,34 @@ impl <'a> State {
                 }
             }
         }
+    }
+
+    fn delete(&mut self) {
+        
+        let cur_col = self.cursor_pos.colmun;
+        if cur_col > 0 {
+            let line = self.lines.get_mut(self.cursor_pos.line_number);
+            let line = if line.is_none() { return; } else { line.unwrap() };
+            line.content.remove(cur_col-1);
+            self.cursor_pos.colmun = self.cursor_pos.colmun.saturating_sub(1);
+        } else {
+            let cur_row = self.cursor_pos.line_number;
+            if cur_row == 0 {
+                return;
+            } else {
+                let end_of_prev_line = {
+                    let (prev, cur) = self.lines[cur_row-1..=cur_row].split_at_mut(1);
+                    let prev_line_len = prev[0].content.len();
+                    prev[0].content.append(&mut cur[0].content);
+                    self.lines.remove(cur_row);
+                    prev_line_len
+                };
+
+                let new_row = cur_row - 1;
+                self.cursor_pos.line_number = new_row;
+                self.cursor_pos.colmun = end_of_prev_line;
+            }
+        };
     }
 
     pub fn line_text(&self, line_number: usize) -> Option<String> {
