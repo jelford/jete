@@ -151,17 +151,34 @@ impl<'a> State {
     }
 
     fn write(&mut self) {
-        if let Some(ref mut f) = self.file {
+        if let Some(f) = self.file.as_mut() {
             f.seek(SeekFrom::Start(0))
                 .expect("seeking to start of file");
             let num_lines = self.lines.len();
+            
             let mut writer = BufWriter::new(f);
             for (i, l) in self.lines.iter().enumerate() {
-                let _ = writer.write_all(l.content.iter().collect::<String>().as_bytes());
-                if i + 1 < num_lines {
-                    let _ = writer.write(b"\n");
+                let write_result = 
+                    writer.write_all(l.content.iter().collect::<String>().as_bytes())
+                    .and_then({
+                        |_| if i < num_lines { 
+                            writer.write(b"\n") 
+                        } else { 
+                            Ok(0)
+                        }
+                    });
+                
+                if let Err(e) = write_result {
+                    self.status_text.clear();
+                    self.status_text.push_str(&format!("Failed to save file: {}", e));
+                    return;
                 }
             }
+
+            let f = writer.get_mut();
+            let new_file_length = f.seek(SeekFrom::Current(0)).expect("Unable to determine length of file being written");
+            f.set_len(new_file_length).expect("Unable to truncate file after writing");
+        
         }
     }
 
