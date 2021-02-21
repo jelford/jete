@@ -73,6 +73,7 @@ impl<'a> State {
                 Event::Key(k) => match k {
                     Key::Esc => self.shift_mode(Mode::Normal),
                     Key::Char('\n') => return self.commit_command(),
+                    Key::Backspace => self.delete(),
                     Key::Char(k) => self.insert(k),
                     _ => {}
                 },
@@ -165,35 +166,47 @@ impl<'a> State {
     }
 
     fn delete(&mut self) {
-        let cur_col = self.cursor_pos.colmun;
-        if cur_col > 0 {
-            let line = self.lines.get_mut(self.cursor_pos.line_number);
-            if let Some(line) = line {
-                line.content.remove(cur_col - 1);
-                self.cursor_pos.colmun = self.cursor_pos.colmun.saturating_sub(1);
-            }
-        } else {
-            let cur_row = self.cursor_pos.line_number;
-            if cur_row <= 0 {
-                return;
-            }
-            
-            let end_of_prev_line = self.lines.get(cur_row-1).map(|l| l.content.len()).unwrap_or(0);
+        match self.mode {
+            Mode::Insert => {
+                let cur_col = self.cursor_pos.colmun;
+                if cur_col > 0 {
+                    let line = self.lines.get_mut(self.cursor_pos.line_number);
+                    if let Some(line) = line {
+                        line.content.remove(cur_col - 1);
+                        self.cursor_pos.colmun = self.cursor_pos.colmun.saturating_sub(1);
+                    }
+                } else {
+                    let cur_row = self.cursor_pos.line_number;
+                    if cur_row <= 0 {
+                        return;
+                    }
+                    
+                    let end_of_prev_line = self.lines.get(cur_row-1).map(|l| l.content.len()).unwrap_or(0);
 
-            {
-                let prev_and_cur_row = self.lines.get_mut(cur_row - 1..=cur_row);
-                if let Some(prev_and_cur_row) = prev_and_cur_row {
-                    let (prev, cur) = prev_and_cur_row.split_at_mut(1);
-                    prev[0].content.append(&mut cur[0].content);
-                    self.lines.remove(cur_row);
+                    {
+                        let prev_and_cur_row = self.lines.get_mut(cur_row - 1..=cur_row);
+                        if let Some(prev_and_cur_row) = prev_and_cur_row {
+                            let (prev, cur) = prev_and_cur_row.split_at_mut(1);
+                            prev[0].content.append(&mut cur[0].content);
+                            self.lines.remove(cur_row);
+                        }
+                    }
+
+                    let new_row = cur_row - 1;
+                    self.cursor_pos.line_number = new_row;
+                    self.cursor_pos.colmun = end_of_prev_line;
+                
+                };
+            },
+            Mode::Command => {
+                if self.command_line.len() > 0 {
+                    self.command_line.remove(self.command_line.len()-1);
+                } else {
+                    self.shift_mode(Mode::Normal);
                 }
             }
-
-            let new_row = cur_row - 1;
-            self.cursor_pos.line_number = new_row;
-            self.cursor_pos.colmun = end_of_prev_line;
-        
-        };
+            _ => {}
+        }
     }
 
     pub fn line_text(&self, line_number: usize) -> Option<String> {
