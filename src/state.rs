@@ -1,22 +1,32 @@
 
 
 use io::{BufRead, BufWriter, Seek, SeekFrom, Write};
-use std::fs::File;
+use std::{fs::File, usize};
 
 use crate::userinput::{Event, Key};
 
 #[derive(Clone)]
 pub struct Line {
-    content: String,
+    content: Vec<char>
 }
 
 impl Line {
     fn empty() -> Self {
-        Line { content: String::new() }
+        Line { content: Vec::new()}
     }
 
+}
+
+impl From<String> for Line {
+
     fn from(existing: String) -> Self {
-        Line { content: existing }
+        Line { content: existing.chars().collect() }
+    }
+}
+
+impl From<Vec<char>> for Line {
+    fn from(existing: Vec<char>) -> Self {
+        Line {content: existing}
     }
 }
 
@@ -109,10 +119,6 @@ impl <'a> State {
 
                 let l = &mut self.lines[cur_ln];
 
-                while l.content.len() < cur_col {
-                    l.content.push(' ');
-                }
-
                 assert!(cur_col <= l.content.len());
                 
                 if c == '\n' {
@@ -121,11 +127,11 @@ impl <'a> State {
                     self.cursor_pos.line_number += 1;
                     self.cursor_pos.colmun = 0;
                 } else {
-                    l.content.insert(cur_col.min(l.content.len()), c);
+                    l.content.insert(cur_col, c);
                     self.cursor_pos.colmun += 1;
                 }
 
-                self.status_text = format!("inserted char: {}", if c != '\n' { c } else { '\0' });
+                self.status_text = format!("char: {} @ {}", if c != '\n' { c as u8 } else { 0 }, cur_col);
             }
             Mode::Command => {
                 if c == '\n' {
@@ -158,7 +164,7 @@ impl <'a> State {
             let num_lines = self.lines.len();
             let mut writer = BufWriter::new(f);
             for (i, l) in self.lines.iter().enumerate() {
-                let _ = writer.write_all(l.content.as_bytes());
+                let _ = writer.write_all(l.content.iter().collect::<String>().as_bytes());
                 if i+1 < num_lines {
                     let _ = writer.write(b"\n");
                 }
@@ -166,8 +172,8 @@ impl <'a> State {
         }
     }
 
-    pub fn line_text(&self, line_number: usize) -> Option<&str> {
-        Some(&self.lines.get(line_number)?.content)
+    pub fn line_text(&self, line_number: usize) -> Option<String> {
+        Some(self.lines.get(line_number)?.content.iter().collect())
     }
 
     pub fn status_text(&self) -> &str {
@@ -185,20 +191,41 @@ impl <'a> State {
 
     pub fn move_cursor(&mut self, direction: (i8, i8)) {
 
-        let ln_inc = direction.0;
-        let col_inc = direction.1;
+        match direction {
+            (0, 0) => {},
+            (ln, 0) => {
+                self.cursor_pos.line_number = if !ln.is_negative() {
+                    self.cursor_pos.line_number.saturating_add(ln as usize)
+                } else {
+                    self.cursor_pos.line_number.saturating_sub(ln.abs() as usize)
+                }.clamp(0, self.lines.len());
+                
+                let line = &self.lines[self.cursor_pos.line_number];
+                self.cursor_pos.colmun = self.cursor_pos.colmun.clamp(0, line.content.len());
+            },
+            (0, col) => {
+                let line = &self.lines[self.cursor_pos.line_number];
+                if !col.is_negative() {
+                    self.cursor_pos.colmun = self.cursor_pos.colmun.saturating_add(col as usize).clamp(0, line.content.len());
+                } else {
+                    self.cursor_pos.colmun = self.cursor_pos.colmun.saturating_sub(col.abs() as usize).clamp(0, line.content.len());
+                }
+            }
 
-        self.cursor_pos.line_number = if !ln_inc.is_negative() {
-            self.cursor_pos.line_number.saturating_add(ln_inc as usize)
-        } else {
-            self.cursor_pos.line_number.saturating_sub(ln_inc.abs() as usize)
-        }.min(self.lines.len().max(1)-1);
+            (row, col) => {
+                self.move_cursor((row, 0));
+                self.move_cursor((0, col));
+            }
 
-        self.cursor_pos.colmun = if !col_inc.is_negative() {
-            self.cursor_pos.colmun.saturating_add(col_inc as usize)
-        } else {
-            self.cursor_pos.colmun.saturating_sub(col_inc.abs() as usize)
-        }.min(self.line_text(self.cursor_pos.line_number).map(|t| t.len()).unwrap_or(0));
+        };
+
+        
+        assert!(self.cursor_pos.line_number <= self.lines.len());
+        if self.cursor_pos.line_number < self.lines.len() {
+            let line = &self.lines[self.cursor_pos.line_number];
+            assert!(self.cursor_pos.colmun <= line.content.len());
+        }
+
     }
 
     pub fn cursor_pos(&self) -> &CursorPos {
@@ -237,7 +264,7 @@ pub fn from_file(fname: &OsStr) -> io::Result<State> {
                     .write(true)
                     .create(true)
                     .open(fname)?;
-    let reader = BufReader::new(f.try_clone().expect("Unable to clone file handle for reading"));
+    let reader = BufReader::new(f.try_clone()?);
     let mut lines = Vec::new();
 
     for l in reader.lines() {
