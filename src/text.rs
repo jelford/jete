@@ -2,6 +2,8 @@ use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::{ops::Deref, usize};
 
+use crossbeam::channel::Iter;
+
 /// Provides a way to decide
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Rev {
@@ -30,6 +32,7 @@ pub struct Text {
     lines: Vec<Line>,
 }
 
+#[derive(Debug)]
 pub struct Line {
     content: Vec<char>,
 }
@@ -69,14 +72,20 @@ impl Line {
     }
 }
 
+#[derive(Debug)]
 pub struct LineView<'a> {
     line: &'a Line,
     rev: Rev,
+    line_number: usize,
 }
 
 impl<'a> LineView<'a> {
     pub fn content_str(&self) -> String {
         self.line.content.iter().collect::<String>()
+    }
+
+    pub fn line_number(&self) -> usize {
+        self.line_number
     }
 }
 
@@ -87,6 +96,35 @@ impl<'a> Deref for LineView<'a> {
         self.line
     }
 }
+
+
+pub struct LineViewIterator<'a> {
+    revs: &'a BTreeMap<usize, Rev>,
+    lines: &'a [Line],
+    idx: usize,
+    starting_line_number: usize,
+}
+
+
+impl<'a> Iterator for LineViewIterator<'a> {
+    type Item = LineView<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.idx >= self.lines.len() {
+            None
+        } else {
+            let line = &self.lines[self.idx];
+            let rev = self.revs.range(..=self.idx).next_back().map(|(_, r)| *r).unwrap_or(Rev::default());
+            let line_number = self.starting_line_number + self.idx;
+            let ret = LineView {
+                line, rev, line_number,
+            };
+            self.idx += 1;
+            Some(ret)
+        }
+    }
+}
+
 
 impl Text {
     pub fn new() -> Self {
@@ -119,7 +157,7 @@ impl Text {
             .next_back()
             .map(|(_, r)| *r)
             .unwrap_or_default();
-        Some(LineView { rev, line })
+        Some(LineView { rev, line , line_number: ln_number})
     }
 
     pub fn line_mut(&mut self, ln_number: usize) -> Option<&mut Line> {
@@ -153,6 +191,18 @@ impl Text {
         (0..self.lines.len()).map(move |i| self.line(i).unwrap())
     }
 
+    pub fn iter_line_range<'a>(&'a self, start: usize, end: usize) -> LineViewIterator<'a> {
+
+        let lines = self.lines.get(start.max(0)..end.min(self.lines.len()));
+        
+        LineViewIterator {
+            revs: &self.revs,
+            lines: lines.unwrap_or(&[]),
+            idx: 0,
+            starting_line_number: start,
+        }
+    }
+
     pub fn line_count(&self) -> usize {
         self.lines.len()
     }
@@ -165,6 +215,57 @@ impl Text {
 
 #[cfg(test)]
 mod test {
+    use super::*;
+
+    #[test]
+    fn can_extract_entered_lines() {
+        let mut t = Text::new();
+        t.insert_line(0, "hello");
+        t.insert_line(1, "world");
+
+
+        let l = t.line(0).expect("inserted line not present");
+        assert_eq!(l.content_str(), "hello");
+
+
+        let l = t.line(1).expect("inserted line not present");
+        assert_eq!(l.content_str(), "world");
+    }
+
+    
+    #[test]
+    fn iterate_over_contained_range() {
+        let mut t = Text::new();
+        t.insert_line(0, "hello");
+        t.insert_line(1, "world");
+        t.insert_line(2, "how");
+        t.insert_line(3, "are");
+        t.insert_line(4, "you");
+
+        let mut it = t.iter_line_range(0, 5);
+
+        assert_eq!(it.next().map(|lv| lv.content_str()), Some("hello".to_string()));
+        assert_eq!(it.next().map(|lv| lv.content_str()), Some("world".to_string()));
+        assert_eq!(it.next().map(|lv| lv.content_str()), Some("how".to_string()));
+        assert_eq!(it.next().map(|lv| lv.content_str()), Some("are".to_string()));
+        assert_eq!(it.next().map(|lv| lv.content_str()), Some("you".to_string()));
+        assert!(it.next().is_none());
+        
+        let mut it = t.iter_line_range(0, 2);
+        
+        assert_eq!(it.next().map(|lv| lv.content_str()), Some("hello".to_string()));
+        assert_eq!(it.next().map(|lv| lv.content_str()), Some("world".to_string()));
+        assert!(it.next().is_none());
+
+
+        let mut it = t.iter_line_range(3, 7);
+        
+        assert_eq!(it.next().map(|lv| lv.content_str()), Some("are".to_string()));
+        assert_eq!(it.next().map(|lv| lv.content_str()), Some("you".to_string()));
+        assert!(it.next().is_none());
+    }
+
+
     use std::collections::BTreeMap;
 
     #[test]
@@ -215,8 +316,3 @@ mod test {
         assert_eq!(v, ['a', 'b'])
     }
 }
-
-// pub struct Line {
-//     content: Vec<char>,
-//     annotations: typedstore::TypedStore,
-// }

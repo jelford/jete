@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::{fs::File, usize};
+use typedstore::{TypedStore, new_typedstore};
 
 pub struct CursorPos {
     pub line_number: usize,
@@ -17,6 +18,7 @@ pub struct State {
     mode: Mode,
     command_line: String,
     file: Option<File>,
+    annotations: TypedStore,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -121,6 +123,11 @@ impl<'a> State {
         };
 
         EditorAction::None
+    }
+
+    pub fn annotations<T>(&self) -> Option<&T> 
+        where T: 'static {
+        self.annotations.get()
     }
 
     pub fn insert(&mut self, c: char) {
@@ -358,6 +365,7 @@ pub fn empty<'a>() -> State {
         mode: Mode::Normal,
         command_line: String::new(),
         file: None,
+        annotations: new_typedstore(),
     }
 }
 
@@ -387,5 +395,6 @@ pub fn from_file(fname: &OsStr) -> io::Result<State> {
         mode: Mode::Normal,
         command_line: String::new(),
         file: Some(f),
+        annotations: new_typedstore(),
     })
 }

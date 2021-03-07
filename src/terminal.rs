@@ -1,15 +1,12 @@
 use crate::display::Display;
 use crate::state::{Mode, State};
 use crate::userinput::{Event, UserInputSource};
+use crate::highlight::HighlightState;
 use std::{
     io::{stdin, stdout, Stdin, Stdout, Write},
     usize,
 };
-use termion::{
-    clear, cursor,
-    input::{Events, MouseTerminal, TermRead},
-    raw::{IntoRawMode, RawTerminal},
-};
+use termion::{clear, cursor, input::{Events, MouseTerminal, TermRead}, raw::{IntoRawMode, RawTerminal}, screen};
 
 pub fn terminal_display() -> (TerminalDisplay, TerminalInput) {
     assert!(
@@ -58,32 +55,37 @@ impl Display for TerminalDisplay {
             .line_number
             .saturating_sub((text_view_height as usize).saturating_sub(1));
 
+        let hlstate = state.annotations::<HighlightState>();
         let text = state.text();
 
-        for i in 1..=text_view_height {
-            let text_line = self.top_line + (i as usize - 1);
-            let output_line = i as u16;
-            let line = text.line(text_line).map(|lv| lv.content_str());
-            match line {
-                None => write!(
-                    self.stdout,
-                    "{}{}{:2}|~",
-                    cursor::Goto(1, output_line),
-                    clear::CurrentLine,
-                    text_line
-                ),
-                Some(txt) => write!(
-                    self.stdout,
-                    "{}{}{:2}|{}",
-                    cursor::Goto(1, output_line),
-                    clear::CurrentLine,
-                    text_line,
-                    &txt[..txt.len().min(w as usize - 1)]
-                ),
-            }
-            .expect("Unable to write to screen");
-            write!(self.stdout, "\n\r").unwrap();
+        let mut text_lines = text.iter_line_range(self.top_line, self.top_line.saturating_add(text_view_height as usize));
+        let mut output_line = 1;
+        while output_line < text_view_height {
+            match text_lines.next() {
+                Some(line) => {
+                    let txt = line.content_str();
+                    write!(
+                        self.stdout,
+                        "{}{}{:2}|{}",
+                        cursor::Goto(1, output_line),
+                        clear::CurrentLine,
+                        line.line_number(),
+                        &txt[..txt.len().min(w as usize - 1)]
+                    )
+                },
+                None => { 
+                    write!(
+                        self.stdout,
+                        "{}{}{:2}|~",
+                        cursor::Goto(1, output_line),
+                        clear::CurrentLine,
+                        self.top_line.saturating_add(output_line as usize - 1)
+                    )
+                }
+            }.expect("Unable to write to main text area");
+            output_line += 1;
         }
+
 
         write!(
             self.stdout,
