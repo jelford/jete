@@ -58,10 +58,12 @@ impl Display for TerminalDisplay {
             .line_number
             .saturating_sub((text_view_height as usize).saturating_sub(1));
 
+        let text = state.text();
+
         for i in 1..=text_view_height {
             let text_line = self.top_line + (i as usize - 1);
             let output_line = i as u16;
-            let line = state.line_text(text_line);
+            let line = text.line(text_line).map(|lv| lv.content_str());
             match line {
                 None => write!(
                     self.stdout,

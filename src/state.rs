@@ -2,35 +2,8 @@ use std::ffi::OsStr;
 use std::fs::OpenOptions;
 use std::io::{self, BufReader, BufRead, BufWriter, Seek, SeekFrom, Write};
 use std::{fs::File, usize};
-
 use crate::userinput::{Event, Key};
-
-#[derive(Clone)]
-pub struct Line {
-    content: Vec<char>,
-}
-
-impl Line {
-    fn empty() -> Self {
-        Line {
-            content: Vec::new(),
-        }
-    }
-}
-
-impl From<String> for Line {
-    fn from(existing: String) -> Self {
-        Line {
-            content: existing.chars().collect(),
-        }
-    }
-}
-
-impl From<Vec<char>> for Line {
-    fn from(existing: Vec<char>) -> Self {
-        Line { content: existing }
-    }
-}
+use crate::text::Text;
 
 pub struct CursorPos {
     pub line_number: usize,
@@ -39,11 +12,12 @@ pub struct CursorPos {
 
 pub struct State {
     cursor_pos: CursorPos,
-    lines: Vec<Line>,
+    text: Text,
     status_text: String,
     mode: Mode,
     command_line: String,
     file: Option<File>,
+    
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -141,26 +115,31 @@ impl<'a> State {
                 let cur_ln = self.cursor_pos.line_number;
                 let cur_col = self.cursor_pos.colmun;
 
-                while self.lines.len() <= cur_ln {
-                    self.lines.push(Line::empty());
-                }
+                let l = match self.text.line_mut(cur_ln) {
+                    Some(l) => l,
+                    None => {
+                        self.text.insert_line(cur_ln, "");
+                        self.text.line_mut(cur_ln).expect("Line just inserted doesn't exist")
+                    }
+                };
 
-                let l = &mut self.lines[cur_ln];
+                assert!(cur_col <= l.char_count());
 
-                assert!(cur_col <= l.content.len());
-
-                if c == '\n' {
-                    let rest_of_line = l.content.split_off(cur_col);
-                    self.lines.insert(cur_ln + 1, Line::from(rest_of_line));
+                let cur_ln = if c == '\n' {
+                    let rest_of_line = l.content_mut().split_off(cur_col);
+                    self.text.insert_line_from_chars(cur_ln + 1, rest_of_line);
                     self.cursor_pos.line_number += 1;
                     self.cursor_pos.colmun = 0;
+                    cur_ln + 1
                 } else {
-                    l.content.insert(cur_col, c);
+                    l.content_mut().insert(cur_col, c);
                     self.cursor_pos.colmun += 1;
-                }
+                    cur_ln
+                };
 
                 self.status_text = format!(
-                    "char: {} @ {}",
+                    "char: {} @ ({},{})",
+                    cur_ln,
                     if c != '\n' { c as u8 } else { 0 },
                     cur_col
                 );
@@ -191,14 +170,15 @@ impl<'a> State {
 
     fn write(&mut self) {
         if let Some(f) = self.file.as_mut() {
+            
             f.seek(SeekFrom::Start(0))
                 .expect("seeking to start of file");
-            let num_lines = self.lines.len();
+            let num_lines = self.text.line_count();
             
             let mut writer = BufWriter::new(f);
-            for (i, l) in self.lines.iter().enumerate() {
+            for (i, l) in self.text.iter_lines().enumerate() {
                 let write_result = 
-                    writer.write_all(l.content.iter().collect::<String>().as_bytes())
+                    writer.write_all(l.content_str().as_bytes())
                     .and_then({
                         |_| if i < num_lines { 
                             writer.write(b"\n") 
@@ -226,25 +206,25 @@ impl<'a> State {
             Mode::Insert => {
                 let cur_col = self.cursor_pos.colmun;
                 if cur_col > 0 {
-                    let line = self.lines.get_mut(self.cursor_pos.line_number);
+                    let line = self.text.line_mut(self.cursor_pos.line_number);
                     if let Some(line) = line {
-                        line.content.remove(cur_col - 1);
+                        line.remove_char(cur_col - 1);
                         self.cursor_pos.colmun = self.cursor_pos.colmun.saturating_sub(1);
                     }
                 } else {
                     let cur_row = self.cursor_pos.line_number;
                     if cur_row <= 0 {
+                        self.text.remove_line(0);
                         return;
                     }
                     
-                    let end_of_prev_line = self.lines.get(cur_row-1).map(|l| l.content.len()).unwrap_or(0);
+                    let end_of_prev_line = self.text.line(cur_row-1).map(|l| l.char_count()).unwrap_or(0);
 
                     {
-                        let prev_and_cur_row = self.lines.get_mut(cur_row - 1..=cur_row);
-                        if let Some(prev_and_cur_row) = prev_and_cur_row {
-                            let (prev, cur) = prev_and_cur_row.split_at_mut(1);
-                            prev[0].content.append(&mut cur[0].content);
-                            self.lines.remove(cur_row);
+                        let cur_line = self.text.remove_line(cur_row);
+                        let prev_row = self.text.line_mut(cur_row - 1);
+                        if let Some(prev_row) = prev_row {
+                            prev_row.extend_line(cur_line);
                         }
                     }
 
@@ -263,10 +243,6 @@ impl<'a> State {
             }
             _ => {}
         }
-    }
-
-    pub fn line_text(&self, line_number: usize) -> Option<String> {
-        Some(self.lines.get(line_number)?.content.iter().collect())
     }
 
     pub fn status_text(&self) -> &str {
@@ -293,30 +269,26 @@ impl<'a> State {
                         .line_number
                         .saturating_sub(ln.saturating_abs() as usize)
                 }
-                .clamp(0, self.lines.len().saturating_sub(1));
+                .clamp(0, self.text.line_count().saturating_sub(1));
 
-                let line = self.lines.get(self.cursor_pos.line_number);
-                self.cursor_pos.colmun = if let Some(line) = line {
-                    self.cursor_pos.colmun.clamp(0, line.content.len())
-                } else {
-                    0
-                };
+                let line = self.text.line(self.cursor_pos.line_number);
+                self.cursor_pos.colmun = line.map(|l| self.cursor_pos.colmun.clamp(0, l.char_count())).unwrap_or(0);
             }
             (0, col) => {
-                let line = self.lines.get(self.cursor_pos.line_number);
+                let line = self.text.line(self.cursor_pos.line_number);
                 if let Some(line) = line {
                     if !col.is_negative() {
                         self.cursor_pos.colmun = self
                             .cursor_pos
                             .colmun
                             .saturating_add(col as usize)
-                            .clamp(0, line.content.len());
+                            .clamp(0, line.char_count());
                     } else {
                         self.cursor_pos.colmun = self
                             .cursor_pos
                             .colmun
                             .saturating_sub(col.abs() as usize)
-                            .clamp(0, line.content.len());
+                            .clamp(0, line.char_count());
                     }
                 }
             }
@@ -327,10 +299,10 @@ impl<'a> State {
             }
         };
 
-        assert!(self.cursor_pos.line_number <= self.lines.len());
-        if self.cursor_pos.line_number < self.lines.len() {
-            let line = &self.lines[self.cursor_pos.line_number];
-            assert!(self.cursor_pos.colmun <= line.content.len());
+        assert!(self.cursor_pos.line_number <= self.text.line_count());
+        if self.cursor_pos.line_number < self.text.line_count() {
+            let line = &self.text.line(self.cursor_pos.line_number).unwrap();
+            assert!(self.cursor_pos.colmun <= line.char_count());
         }
     }
 
@@ -341,6 +313,10 @@ impl<'a> State {
     pub fn command_line(&self) -> &str {
         &self.command_line
     }
+
+    pub fn text(&self) -> &Text {
+        &self.text
+    }
 }
 
 pub fn empty<'a>() -> State {
@@ -349,7 +325,7 @@ pub fn empty<'a>() -> State {
             line_number: 0,
             colmun: 0,
         },
-        lines: Vec::new(),
+        text: Text::new(),
         status_text: String::new(),
         mode: Mode::Normal,
         command_line: String::new(),
@@ -370,7 +346,7 @@ pub fn from_file(fname: &OsStr) -> io::Result<State> {
 
     for l in reader.lines() {
         let l = l?;
-        lines.push(Line::from(l));
+        lines.push(l);
     }
 
     Ok(State {
@@ -378,7 +354,7 @@ pub fn from_file(fname: &OsStr) -> io::Result<State> {
             line_number: 0,
             colmun: 0,
         },
-        lines,
+        text: Text::from(&lines),
         status_text: String::new(),
         mode: Mode::Normal,
         command_line: String::new(),
