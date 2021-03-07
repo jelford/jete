@@ -1,5 +1,5 @@
 use crate::display::Display;
-use crate::state::{EditorAction, State, input_map};
+use crate::state::{input_map, EditorAction, State};
 
 use crate::userinput::UserInputSource;
 

@@ -7,8 +7,6 @@ fn main() {
     let mut args = env::args_os();
     args.next().unwrap(); // safe: just the process name
 
-
-
     let state = match args.next() {
         None => state::empty(),
         Some(fname) => state::from_file(&fname).expect("Unable to read file"),

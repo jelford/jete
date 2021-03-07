@@ -1,9 +1,9 @@
+use crate::text::Text;
+use crate::userinput::{Event, Key};
 use std::ffi::OsStr;
 use std::fs::OpenOptions;
-use std::io::{self, BufReader, BufRead, BufWriter, Seek, SeekFrom, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::{fs::File, usize};
-use crate::userinput::{Event, Key};
-use crate::text::Text;
 
 pub struct CursorPos {
     pub line_number: usize,
@@ -17,7 +17,6 @@ pub struct State {
     mode: Mode,
     command_line: String,
     file: Option<File>,
-    
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -40,7 +39,7 @@ pub enum Command {
     MoveCursor {
         lines_down: isize,
         columns_right: isize,
-    }
+    },
 }
 
 pub fn input_map(current_mode: &Mode, e: Event) -> Option<Command> {
@@ -61,23 +60,35 @@ pub fn input_map(current_mode: &Mode, e: Event) -> Option<Command> {
                 Key::Char('\n') => Some(Command::CommitCommandline),
                 Key::Backspace => Some(Command::DeleteAtCursor),
                 Key::Char(c) => Some(Command::InsertAtCursor(c)),
-                _ => None
+                _ => None,
             },
-            _ => None
+            _ => None,
         },
         Mode::Normal => match e {
             Event::Key(k) => match k {
-                Key::Char('u') => Some(Command::MoveCursor { lines_down: -1, columns_right: 0}),
-                Key::Char('o') => Some(Command::MoveCursor { lines_down: 0, columns_right: 1}),
-                Key::Char('e') => Some(Command::MoveCursor { lines_down: 1, columns_right: 0}),
-                Key::Char('n') => Some(Command::MoveCursor { lines_down: 0, columns_right: -1}),
+                Key::Char('u') => Some(Command::MoveCursor {
+                    lines_down: -1,
+                    columns_right: 0,
+                }),
+                Key::Char('o') => Some(Command::MoveCursor {
+                    lines_down: 0,
+                    columns_right: 1,
+                }),
+                Key::Char('e') => Some(Command::MoveCursor {
+                    lines_down: 1,
+                    columns_right: 0,
+                }),
+                Key::Char('n') => Some(Command::MoveCursor {
+                    lines_down: 0,
+                    columns_right: -1,
+                }),
                 Key::Char(':') => Some(Command::ShiftMode(Mode::Command)),
                 Key::Char('i') => Some(Command::ShiftMode(Mode::Insert)),
-                _ => None
+                _ => None,
             },
-            _ => None
+            _ => None,
         },
-        _ => None
+        _ => None,
     }
 }
 
@@ -86,7 +97,7 @@ impl<'a> State {
         if let Command::ShiftMode(m) = c {
             self.shift_mode(m);
             return EditorAction::None;
-        } 
+        }
 
         match self.mode {
             Mode::Insert => match c {
@@ -101,7 +112,10 @@ impl<'a> State {
                 _ => {}
             },
             Mode::Normal => match c {
-                Command::MoveCursor { lines_down, columns_right} => self.move_cursor((lines_down, columns_right)),
+                Command::MoveCursor {
+                    lines_down,
+                    columns_right,
+                } => self.move_cursor((lines_down, columns_right)),
                 _ => {}
             },
         };
@@ -119,7 +133,9 @@ impl<'a> State {
                     Some(l) => l,
                     None => {
                         self.text.insert_line(cur_ln, "");
-                        self.text.line_mut(cur_ln).expect("Line just inserted doesn't exist")
+                        self.text
+                            .line_mut(cur_ln)
+                            .expect("Line just inserted doesn't exist")
                     }
                 };
 
@@ -170,34 +186,36 @@ impl<'a> State {
 
     fn write(&mut self) {
         if let Some(f) = self.file.as_mut() {
-            
             f.seek(SeekFrom::Start(0))
                 .expect("seeking to start of file");
             let num_lines = self.text.line_count();
-            
+
             let mut writer = BufWriter::new(f);
             for (i, l) in self.text.iter_lines().enumerate() {
-                let write_result = 
-                    writer.write_all(l.content_str().as_bytes())
-                    .and_then({
-                        |_| if i < num_lines { 
-                            writer.write(b"\n") 
-                        } else { 
+                let write_result = writer.write_all(l.content_str().as_bytes()).and_then({
+                    |_| {
+                        if i < num_lines {
+                            writer.write(b"\n")
+                        } else {
                             Ok(0)
                         }
-                    });
-                
+                    }
+                });
+
                 if let Err(e) = write_result {
                     self.status_text.clear();
-                    self.status_text.push_str(&format!("Failed to save file: {}", e));
+                    self.status_text
+                        .push_str(&format!("Failed to save file: {}", e));
                     return;
                 }
             }
 
             let f = writer.get_mut();
-            let new_file_length = f.seek(SeekFrom::Current(0)).expect("Unable to determine length of file being written");
-            f.set_len(new_file_length).expect("Unable to truncate file after writing");
-        
+            let new_file_length = f
+                .seek(SeekFrom::Current(0))
+                .expect("Unable to determine length of file being written");
+            f.set_len(new_file_length)
+                .expect("Unable to truncate file after writing");
         }
     }
 
@@ -213,30 +231,38 @@ impl<'a> State {
                     }
                 } else {
                     let cur_row = self.cursor_pos.line_number;
-                    if cur_row <= 0 {
-                        self.text.remove_line(0);
+
+                    if cur_row == 0 {
+                        if self.text.line_count() == 1 && self.text.line(0).unwrap().char_count() == 0 {
+                            self.text.remove_line(0);
+                        }
                         return;
                     }
-                    
-                    let end_of_prev_line = self.text.line(cur_row-1).map(|l| l.char_count()).unwrap_or(0);
+
+                    let end_of_prev_line = self
+                        .text
+                        .line(cur_row - 1)
+                        .map(|l| l.char_count())
+                        .unwrap_or(0);
 
                     {
                         let cur_line = self.text.remove_line(cur_row);
-                        let prev_row = self.text.line_mut(cur_row - 1);
-                        if let Some(prev_row) = prev_row {
-                            prev_row.extend_line(cur_line);
+                        if let Some(cur_line) = cur_line {
+                            let prev_row = self.text.line_mut(cur_row - 1);
+                            if let Some(prev_row) = prev_row {
+                                prev_row.extend_line(cur_line);
+                            }
                         }
                     }
 
                     let new_row = cur_row - 1;
                     self.cursor_pos.line_number = new_row;
                     self.cursor_pos.colmun = end_of_prev_line;
-                
                 };
-            },
+            }
             Mode::Command => {
                 if self.command_line.len() > 0 {
-                    self.command_line.remove(self.command_line.len()-1);
+                    self.command_line.remove(self.command_line.len() - 1);
                 } else {
                     self.shift_mode(Mode::Normal);
                 }
@@ -272,7 +298,9 @@ impl<'a> State {
                 .clamp(0, self.text.line_count().saturating_sub(1));
 
                 let line = self.text.line(self.cursor_pos.line_number);
-                self.cursor_pos.colmun = line.map(|l| self.cursor_pos.colmun.clamp(0, l.char_count())).unwrap_or(0);
+                self.cursor_pos.colmun = line
+                    .map(|l| self.cursor_pos.colmun.clamp(0, l.char_count()))
+                    .unwrap_or(0);
             }
             (0, col) => {
                 let line = self.text.line(self.cursor_pos.line_number);
