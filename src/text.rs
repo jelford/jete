@@ -1,10 +1,6 @@
-use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::{ops::Deref, usize};
 
-use crossbeam::channel::Iter;
-
-/// Provides a way to decide
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Rev {
     rev: u64,
@@ -26,13 +22,14 @@ impl Rev {
     }
 }
 
+#[derive(Clone)]
 pub struct Text {
     rev: Rev,
     revs: BTreeMap<usize, Rev>,
     lines: Vec<Line>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Line {
     content: Vec<char>,
 }
@@ -86,6 +83,10 @@ impl<'a> LineView<'a> {
 
     pub fn line_number(&self) -> usize {
         self.line_number
+    }
+
+    pub fn rev(&self) -> Rev {
+        self.rev
     }
 }
 

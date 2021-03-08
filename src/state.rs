@@ -1,10 +1,15 @@
-use crate::text::Text;
+use crate::{pubsub::{self, Hub, type_topic}, text::Text};
 use crate::userinput::{Event, Key};
-use std::ffi::OsStr;
+use std::{ffi::OsStr};
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::{fs::File, usize};
 use typedstore::{TypedStore, new_typedstore};
+
+
+pub fn text_update_topic() -> pubsub::TopicId<Text> {
+    pubsub::type_topic::<Text>()
+}
 
 pub struct CursorPos {
     pub line_number: usize,
@@ -19,9 +24,10 @@ pub struct State {
     command_line: String,
     file: Option<File>,
     annotations: TypedStore,
+    pubsub: Hub,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Mode {
     Insert,
     Normal,
@@ -33,6 +39,7 @@ pub enum EditorAction {
     None,
 }
 
+#[derive(Debug, Clone)]
 pub enum Command {
     ShiftMode(Mode),
     DeleteAtCursor,
@@ -96,6 +103,8 @@ pub fn input_map(current_mode: &Mode, e: Event) -> Option<Command> {
 
 impl<'a> State {
     pub fn dispatch(&'a mut self, c: Command) -> EditorAction {
+        log::debug!("dispatching {:?} in mode {:?}", c, self.mode);
+
         if let Command::ShiftMode(m) = c {
             self.shift_mode(m);
             return EditorAction::None;
@@ -123,6 +132,10 @@ impl<'a> State {
         };
 
         EditorAction::None
+    }
+
+    pub fn dispatch_annotation_update<T: 'static>(&mut self, updated_state: T) {
+        self.annotations.set(updated_state);
     }
 
     pub fn annotations<T>(&self) -> Option<&T> 
@@ -159,6 +172,8 @@ impl<'a> State {
                     self.cursor_pos.colmun += 1;
                     cur_ln
                 };
+
+                self.notify_text_change();
 
                 self.status_text = format!(
                     "char: {} @ ({},{})",
@@ -266,6 +281,8 @@ impl<'a> State {
                     self.cursor_pos.line_number = new_row;
                     self.cursor_pos.colmun = end_of_prev_line;
                 };
+
+                self.notify_text_change();
             }
             Mode::Command => {
                 if self.command_line.len() > 0 {
@@ -276,6 +293,11 @@ impl<'a> State {
             }
             _ => {}
         }
+    }
+
+    fn notify_text_change(&mut self) {
+        self.pubsub.send(pubsub::type_topic::<Text>(), self.text.clone()).unwrap();
+        // self.pubsub.send(text_update_topic(), self.text.clone()).expect("Attempting to publish changes");
     }
 
     pub fn status_text(&self) -> &str {
@@ -354,7 +376,7 @@ impl<'a> State {
     }
 }
 
-pub fn empty<'a>() -> State {
+pub fn empty<'a>(pubsub: Hub) -> State {
     State {
         cursor_pos: CursorPos {
             line_number: 0,
@@ -366,10 +388,11 @@ pub fn empty<'a>() -> State {
         command_line: String::new(),
         file: None,
         annotations: new_typedstore(),
+        pubsub
     }
 }
 
-pub fn from_file(fname: &OsStr) -> io::Result<State> {
+pub fn from_file(fname: &OsStr, pubsub: Hub) -> io::Result<State> {
     println!("opening {:?}", fname);
 
     let f = OpenOptions::new()
@@ -385,7 +408,7 @@ pub fn from_file(fname: &OsStr) -> io::Result<State> {
         lines.push(l);
     }
 
-    Ok(State {
+    let mut result = State {
         cursor_pos: CursorPos {
             line_number: 0,
             colmun: 0,
@@ -396,5 +419,10 @@ pub fn from_file(fname: &OsStr) -> io::Result<State> {
         command_line: String::new(),
         file: Some(f),
         annotations: new_typedstore(),
-    })
+        pubsub: pubsub,
+    };
+
+    result.notify_text_change();
+
+    Ok(result)
 }

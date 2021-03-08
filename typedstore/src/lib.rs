@@ -15,13 +15,21 @@ impl TypedStore {
     }
 
     pub fn set<T: 'static>(&mut self, val: T) {
+        let val = Box::new(val);
+        self.set_boxed(val);
+    }
+
+    pub fn set_boxed<T: 'static>(&mut self, val: Box<T>) {
         let key = TypeId::of::<T>();
-        let v = Box::new(val);
-        self.values.insert(key, v);
+        self.values.insert(key, val);
     }
 
     pub fn get<T: 'static>(&self) -> Option<&T> {
         let key = TypeId::of::<T>();
+        self.get_by_id(key)
+    }
+
+    pub fn get_by_id<T: 'static>(&self, key: TypeId) -> Option<&T> {
         self.values.get(&key).map(|any| {
             any.downcast_ref::<T>()
                 .expect("Internal error; type doesn't match TypeId::of::<type>()")

@@ -6,7 +6,8 @@ use std::{
     io::{stdin, stdout, Stdin, Stdout, Write},
     usize,
 };
-use termion::{clear, cursor, input::{Events, MouseTerminal, TermRead}, raw::{IntoRawMode, RawTerminal}, screen};
+use syntect::{easy::HighlightLines, highlighting::ThemeSet, parsing::SyntaxSet, util::as_24_bit_terminal_escaped};
+use termion::{clear, color, cursor, input::{Events, MouseTerminal, TermRead}, raw::{IntoRawMode, RawTerminal}, screen};
 
 pub fn terminal_display() -> (TerminalDisplay, TerminalInput) {
     assert!(
@@ -18,6 +19,7 @@ pub fn terminal_display() -> (TerminalDisplay, TerminalInput) {
             .into_raw_mode()
             .expect("Unable to set terminal to raw mode... is this a tty?"),
     );
+    log::debug!("Terminal entered raw mode");
     let stdin = stdin();
 
     write!(stdout, "{}{}", clear::All, cursor::Goto(1, 1))
@@ -45,6 +47,7 @@ pub struct TerminalInput {
 
 impl Display for TerminalDisplay {
     fn update(&mut self, state: &State) {
+        log::debug!("Render start");
         let (w, h) = termion::terminal_size().expect("unable to check terminal dimensions");
 
         let lines_at_bottom = 2u16;
@@ -60,18 +63,24 @@ impl Display for TerminalDisplay {
 
         let mut text_lines = text.iter_line_range(self.top_line, self.top_line.saturating_add(text_view_height as usize));
         let mut output_line = 1;
+
+       
         while output_line < text_view_height {
             match text_lines.next() {
                 Some(line) => {
                     let txt = line.content_str();
+                    let escaped = hlstate.and_then(|hl| hl.highlighted_line(&line)).unwrap_or(txt);
                     write!(
                         self.stdout,
-                        "{}{}{:2}|{}",
+                        "{}{}{}{:2}|{}",
+                        color::Fg(color::Reset),
                         cursor::Goto(1, output_line),
                         clear::CurrentLine,
                         line.line_number(),
-                        &txt[..txt.len().min(w as usize - 1)]
+                        //&txt[..txt.len().min(w as usize - 1)]
+                        &escaped
                     )
+
                 },
                 None => { 
                     write!(
@@ -134,6 +143,7 @@ impl Display for TerminalDisplay {
         }
 
         self.stdout.flush().unwrap();
+        log::debug!("Render finish");
     }
 }
 
@@ -158,12 +168,12 @@ impl Iterator for TerminalInput {
 
 impl Drop for TerminalDisplay {
     fn drop(&mut self) {
-        // let _ = write!(
-        //     self.stdout,
-        //     "{}{}",
-        //     cursor::Goto(1, 1),
-        //     clear::AfterCursor
-        // );
-        // let _ = self.stdout.flush();
+        let _ = write!(
+            self.stdout,
+            "{}{}",
+            cursor::Goto(1, 1),
+            clear::AfterCursor
+        );
+        let _ = self.stdout.flush();
     }
 }
