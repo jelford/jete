@@ -6,7 +6,6 @@ use crate::state::{input_map, self, EditorAction};
 use crate::pubsub::{Hub, self};
 use std::thread;
 use crossbeam::{channel::select};
-use state::state_update_topic;
 use termion::event::Event;
 
 use crate::userinput::UserInputSource;
@@ -24,7 +23,7 @@ pub fn run<Disp: Display, Inputs: UserInputSource>(fname: Option<OsString>, mut 
     
     let finished = Arc::new(AtomicBool::new(false));
 
-    let mut state_hub = hub.clone();
+    let state_hub = hub.clone();
     let mut input_hub = hub.clone();
     let mut display_hub = hub.clone();
     
