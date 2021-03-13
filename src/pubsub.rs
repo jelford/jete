@@ -16,20 +16,36 @@ impl<T> fmt::Debug for TopicId<T> {
     }
 }
 
-pub fn type_topic<A: 'static>() -> TopicId<A> {
+impl<T> fmt::Display for TopicId<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.id.fmt(f)
+    }
+}
+
+pub fn typed_topic<A: 'static>(name: &'static str) -> TopicId<A> {
     TopicId {
-        id: TopicIdInternal::Type(TypeId::of::<A>()),
+        id: TopicIdInternal::Type {
+            name,
+            tipe: TypeId::of::<A>()
+        },
         _type: PhantomData,
     }
 }
 
-impl<T> TopicId<T> {
-
+impl fmt::Display for TopicIdInternal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TopicIdInternal::Type { name, .. } => name.fmt(f)
+        }
+    }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 enum TopicIdInternal {
-    Type(std::any::TypeId),
+    Type {
+        name: &'static str,
+        tipe: std::any::TypeId
+    }
 }
 
 struct Topic<T> {
@@ -86,7 +102,7 @@ impl HubInternal {
     }
 
     fn send<T: 'static + Clone>(&mut self, topic: TopicId<T>, value: T) -> Result<(), ()> {
-        log::debug!("Sending update on topic: {:?}", topic);
+        log::debug!("Sending update on topic: {}", topic);
         let t = self.get_or_create_topic(&topic);
 
         let mut closed_channels = Vec::new();
@@ -98,7 +114,7 @@ impl HubInternal {
         }
 
         if closed_channels.len() > 0 {
-            log::debug!("Cleaning closed channels for topic: {:?}", topic);
+            log::debug!("Cleaning closed channels for topic: {}", topic);
         }
         for closed in closed_channels.iter().rev() {
             t.senders.swap_remove(*closed);
@@ -113,7 +129,7 @@ impl HubInternal {
 
 
     fn get_receiver<T: 'static>(&mut self, topic: TopicId<T>) -> Receiver<T> {
-        log::debug!("Giving out receiver for {:?}", topic);
+        log::debug!("Giving out receiver for {}", topic);
         let t = self.get_or_create_topic(&topic);
         let (s, r) = channel::unbounded();
         t.senders.push(s);
@@ -122,7 +138,7 @@ impl HubInternal {
 
     fn get_or_create_topic<T: 'static>(&mut self, topic: &TopicId<T>) -> &mut Topic<T> {
         self.topics.entry(topic.id).or_insert_with(|| {
-            log::debug!("Setting up channel for {:?}", topic);
+            log::debug!("Setting up channel for {}", topic);
             let t : Topic<T> = Topic {
                 senders: Vec::new(),
             };
@@ -141,7 +157,7 @@ mod tests {
     #[test]
     fn can_receive_notification() {
         let mut h = Hub::new();
-        let topic = type_topic::<u8>();
+        let topic = typed_topic::<u8>("test");
         let receiver = h.get_receiver(topic.clone());
 
         h.send(topic, 5).unwrap();
@@ -153,7 +169,7 @@ mod tests {
     fn can_receive_from_cloned_hub() {
 
         let mut h1 = Hub::new();
-        let topic = type_topic::<u8>();
+        let topic = typed_topic::<u8>("test");
         let receiver = h1.get_receiver(topic.clone());
 
         let mut h2 = h1.clone();
@@ -170,17 +186,17 @@ mod tests {
         let (sync_send, sync_receive) = channel::bounded(0);
 
         let t = std::thread::spawn(move || {
-            let r = h2.get_receiver(type_topic::<u8>());
+            let r = h2.get_receiver(typed_topic::<u8>("test"));
             sync_send.send(()).expect("Failed trying to signal to main thread that we're ready for assertions");
             let result = r.recv_timeout(Duration::from_millis(30));
             result.unwrap();
         });
 
         sync_receive.recv_timeout(Duration::from_millis(50)).expect("Never got the go-ahead from receiver");
-        h1.send(type_topic::<u8>(), 12).expect("Sending failed - no receiver?");
+        h1.send(typed_topic::<u8>("test"), 12).expect("Sending failed - no receiver?");
         
         t.join().unwrap();
         
-        h1.send(type_topic::<u8>(), 13).expect_err("Should fail now as no subscribers");
+        h1.send(typed_topic::<u8>("test"), 13).expect_err("Should fail now as no subscribers");
     }
 }

@@ -8,7 +8,7 @@ use typedstore::{TypedStore, new_typedstore};
 
 
 pub fn text_update_topic() -> pubsub::TopicId<Text> {
-    pubsub::type_topic::<Text>()
+    pubsub::typed_topic::<Text>("body-text")
 }
 
 pub struct CursorPos {
@@ -287,7 +287,7 @@ impl<'a> State {
     }
 
     fn notify_text_change(&mut self) {
-        self.pubsub.send(pubsub::type_topic::<Text>(), self.text.clone()).unwrap();
+        self.pubsub.send(text_update_topic(), self.text.clone()).unwrap();
         // self.pubsub.send(text_update_topic(), self.text.clone()).expect("Attempting to publish changes");
     }
 

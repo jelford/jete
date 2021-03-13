@@ -28,7 +28,7 @@ impl HighlightState {
     }
 
     pub fn topic() -> pubsub::TopicId<HighlightState> {
-        pubsub::type_topic::<HighlightState>()
+        pubsub::typed_topic::<HighlightState>("highlight")
     }
 }
 

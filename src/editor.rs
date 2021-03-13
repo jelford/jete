@@ -17,7 +17,7 @@ pub fn run<Disp: Display, Inputs: UserInputSource>(fname: Option<OsString>, mut 
     
     highlight::spawn_highlighter(hub.clone());
     
-    let input_topic = pubsub::type_topic::<Event>();
+    let input_topic = pubsub::typed_topic::<Event>("input");
     let inputs = hub.get_receiver(input_topic.clone());
     let syntax_updates = hub.get_receiver(highlight::HighlightState::topic());
     
@@ -27,7 +27,7 @@ pub fn run<Disp: Display, Inputs: UserInputSource>(fname: Option<OsString>, mut 
 
     let other_finished = finished.clone();
 
-    thread::spawn(move || {
+    thread::Builder::new().name("input".into()).spawn(move || {
         for e in i.events() {
             let send_result = hub.send(input_topic.clone(), e);
             if send_result.is_err() {
@@ -35,10 +35,10 @@ pub fn run<Disp: Display, Inputs: UserInputSource>(fname: Option<OsString>, mut 
                 break;
             }
         }
-    });
+    }).expect("Failed spawning input listener thread");
 
 
-    thread::spawn(move || {
+    thread::Builder::new().name("core".into()).spawn(move || {
         let mut state = match fname {
             None => state::empty(state_hub),
             Some(fname) => state::from_file(&fname, state_hub).expect("Unable to read file"),
@@ -78,7 +78,9 @@ pub fn run<Disp: Display, Inputs: UserInputSource>(fname: Option<OsString>, mut 
 
         log::debug!("finishing main state thread");
         other_finished.store(true, Ordering::SeqCst);
-    }).join().unwrap();
+    }).expect("Failed spawning core editor thread")
+        .join()
+        .expect("Failure on core thread");
 
     log::debug!("Shutting down");
 }
