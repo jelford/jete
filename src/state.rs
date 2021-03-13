@@ -188,14 +188,16 @@ impl<'a> State {
     }
 
     fn notify_change(&mut self) {
-        self.pubsub.send(state_update_topic(), StateSnapshot{
+        if let Err(_) = self.pubsub.send(state_update_topic(), StateSnapshot{
             cursor_pos: self.cursor_pos.clone(),
             text: self.text.clone(),
             status_text: self.status_text.clone(),
             mode: self.mode.clone(),
             command_line: self.command_line.clone(),
             annotations: self.annotations.clone()
-        }).expect("Unable to notify state update");
+        }) {
+            log::debug!("State changed but nobody's listening");
+        }
     }
 
     pub fn insert(&mut self, c: char) {
@@ -343,7 +345,9 @@ impl<'a> State {
     }
 
     fn notify_text_change(&mut self) {
-        self.pubsub.send(text_update_topic(), self.text.clone()).expect("failed to publish text update - no listeners");
+        if let Err(_) = self.pubsub.send(text_update_topic(), self.text.clone()) {
+            log::debug!("Text updated but nobody's listening");
+        }
         self.notify_change();
     }
 
