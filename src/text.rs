@@ -15,6 +15,12 @@ pub struct Rev {
     rev: u64,
 }
 
+impl From<u64> for Rev {
+    fn from(v: u64) -> Self {
+        Rev { rev: v }
+    }
+}
+
 impl Default for Rev {
     fn default() -> Self {
         Rev { rev: 0 }
@@ -66,6 +72,7 @@ pub struct LineContent {
 #[derive(Debug, Clone)]
 pub struct Line {
     id: LineId,
+    rev: Rev,
     content: Vec<char>,
     content_string: Arc<String>,
 }
@@ -84,6 +91,10 @@ where
 }
 
 impl Line {
+
+    pub fn content_string(&self) -> Arc<String> {
+        self.content_string.clone()
+    }
 
     pub fn char_count(&self) -> usize {
         self.content.len()
@@ -121,7 +132,7 @@ impl Line {
 #[derive(Debug)]
 pub struct LineView<'a> {
     line: &'a Line,
-    rev: Rev,
+    max_rev_before: Rev,
     line_number: usize,
 }
 
@@ -139,7 +150,11 @@ impl<'a> LineView<'a> {
     }
 
     pub fn rev(&self) -> Rev {
-        self.rev
+        self.line.rev
+    }
+
+    pub fn max_rev_before(&self) -> Rev {
+        self.max_rev_before
     }
 }
 
@@ -171,7 +186,7 @@ impl<'a> Iterator for LineViewIterator<'a> {
             let rev = self.revs.range(..=self.idx).next_back().map(|(_, r)| *r).unwrap_or(Rev::default());
             let line_number = self.starting_line_number + self.idx;
             let ret = LineView {
-                line, rev, line_number,
+                line, max_rev_before: rev, line_number,
             };
             self.idx += 1;
             Some(ret)
@@ -191,9 +206,13 @@ impl Text {
     }
 
     fn bump_line_id(&mut self) -> LineId {
-        let ret = self.next_line_id;
-        self.next_line_id = ret.bump();
-        ret
+        self.next_line_id = self.next_line_id.bump();
+        self.next_line_id
+    }
+
+    fn bump_rev(&mut self) -> Rev {
+        self.rev = self.rev.bump();
+        self.rev
     }
 
     pub fn from(lines: &[String]) -> Self {
@@ -207,6 +226,7 @@ impl Text {
         for l in lines {
             let l = Line {
                 id: text.bump_line_id(),
+                rev: Rev::default(),
                 content: l.chars().collect(),
                 content_string: Arc::new(l.clone()),
             };
@@ -225,25 +245,30 @@ impl Text {
             .next_back()
             .map(|(_, r)| *r)
             .unwrap_or_default();
-        Some(LineView { rev, line , line_number: ln_number})
+        Some(LineView { max_rev_before: rev, line , line_number: ln_number})
     }
 
     pub fn line_mut(&mut self, ln_number: usize) -> Option<&mut Line> {
+        let rev = self.bump_rev();
         self.line_changed(ln_number);
-        self.lines.get_mut(ln_number)
+        self.lines.get_mut(ln_number).map(move |mut ln| {
+            ln.rev = rev; 
+            ln
+        })
     }
 
     pub fn line_mut_populate(&mut self, ln_number: usize) -> &mut Line {
+        self.bump_rev();
         if self.line_count() > ln_number {
             self.line_changed(ln_number);
             &mut self.lines[ln_number]
         } else {
-            self.rev.bump();
             let number_of_new_lines = ln_number - self.lines.len() + 1;
             self.lines.reserve(number_of_new_lines);
             for _ in 0..number_of_new_lines {
                 let l = Line {
                     id: self.bump_line_id(),
+                    rev: self.rev,
                     content: vec![],
                     content_string: EMPTY_STRING.clone(),
                 };
@@ -258,7 +283,7 @@ impl Text {
         if self.lines.len() <= ln_number {
             return None;
         }
-
+        self.bump_rev();
         self.line_changed(ln_number);
         Some(self.lines.remove(ln_number))
     }
@@ -267,27 +292,31 @@ impl Text {
     where
         S: Into<LineContent>,
     {
+        let rev = self.bump_rev();
         let lc : LineContent = s.into();
         let line = Line {
             id: self.bump_line_id(),
+            rev,
             content: lc.content,
             content_string: lc.content_string
         };
-        self.line_changed(ln_number);
         self.lines.insert(ln_number, line);
+        self.line_changed(ln_number);
     }
 
     pub fn insert_line_from_chars(&mut self, ln_number: usize, chars: Vec<char>) {
-        self.line_changed(ln_number);
-
+        let rev = self.bump_rev();
         let line_id = self.bump_line_id();
         let content_str = Arc::new(chars.iter().collect());
         
         self.lines.insert(ln_number, Line {
             id: line_id,
+            rev,
             content: chars,
             content_string: content_str,
         });
+
+        self.line_changed(ln_number);
     }
 
     pub fn iter_lines<'a>(&'a self) -> impl Iterator<Item = LineView<'a>> {
@@ -311,7 +340,7 @@ impl Text {
     }
 
     fn line_changed(&mut self, ln_number: usize) {
-        self.revs_before.insert(ln_number, self.rev.bump());
+        self.revs_before.insert(ln_number, self.rev);
         let _ = self.revs_before.split_off(&(ln_number + 1));
     }
 }
@@ -366,5 +395,53 @@ mod test {
         assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("are".to_string()));
         assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("you".to_string()));
         assert!(it.next().is_none());
+    }
+
+    #[test]
+    fn get_line_number_beyond_current_count_populates_empty() {
+        let mut t = Text::new();
+        let l = t.line_mut_populate(24);
+
+        // newly "got" line is empty
+        assert_eq!(&*l.content_string(), "");
+        assert_eq!(l.char_count(), 0);
+        l.insert(0, 'x');
+        assert_eq!(&*l.content_string(), "x");
+        assert_eq!(l.char_count(), 1);
+
+        assert_eq!(t.line_count(), 25);
+        
+    }
+
+    #[test]
+    fn test_revisions_get_bumped() {
+        let mut t = Text::new();
+        t.insert_line(0, "hello world");
+        t.insert_line(1, "lorem ipsum");
+        t.insert_line(2, "dolor sit amet, consectetur adipiscing elit");
+        t.insert_line(3, "Donec cursus malesuada dui eu sagittis");
+
+        let l = t.line_mut(2).unwrap();
+        l.insert(5, 'x');
+
+        let mut max_so_far = Rev::default();
+        for l in t.iter_lines() {
+            assert!(l.rev() <= l.max_rev_before());
+            assert!(l.max_rev_before() >= max_so_far);
+            max_so_far = max_so_far.max(l.max_rev_before());
+        }
+
+        assert_eq!(t.line(0).unwrap().rev(), Rev::from(1));
+        assert_eq!(t.line(1).unwrap().rev(), Rev::from(2));
+        assert_eq!(t.line(2).unwrap().rev(), Rev::from(5));
+        assert_eq!(t.line(3).unwrap().rev(), Rev::from(4));
+        
+        assert_eq!(t.line(0).unwrap().max_rev_before(), Rev::from(1));
+        assert_eq!(t.line(1).unwrap().max_rev_before(), Rev::from(2));
+        assert_eq!(t.line(2).unwrap().max_rev_before(), Rev::from(5));
+        assert_eq!(t.line(3).unwrap().max_rev_before(), Rev::from(5));
+        
+        assert!(t.line(4).is_none());
+        
     }
 }
