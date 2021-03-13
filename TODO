@@ -42,6 +42,9 @@
 - line numbers unhack
 - highlighting
   - language syntax highlighting
+    - Done: async highlighting off-thread
+    - Todo: multi-language highlighting
+    - Todo: incremental / faster highlighting
   - bracket matching
 
 
