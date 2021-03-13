@@ -1,4 +1,4 @@
-use crate::{pubsub::{self, Hub, type_topic}, text::Text};
+use crate::{pubsub::{self, Hub}, text::Text};
 use crate::userinput::{Event, Key};
 use std::{ffi::OsStr};
 use std::fs::OpenOptions;
@@ -97,7 +97,6 @@ pub fn input_map(current_mode: &Mode, e: Event) -> Option<Command> {
             },
             _ => None,
         },
-        _ => None,
     }
 }
 

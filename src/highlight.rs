@@ -1,13 +1,13 @@
-use std::{borrow::Cow, collections::BTreeMap, thread, time::Duration};
-use std::sync::Arc;
+use std::{thread, time::Duration};
+
 
 
 use crossbeam::channel;
-use syntect::{easy::HighlightLines, highlighting::{Highlighter, Style, Theme, ThemeSet}, parsing::{ParseState, ScopeStackOp, SyntaxReference, SyntaxSet}, util::as_24_bit_terminal_escaped};
+use syntect::{highlighting::{Highlighter, ThemeSet}, parsing::{ParseState, ScopeStackOp, SyntaxSet}};
 
-use crate::{pubsub::{self, Hub}, text::LineView};
+use crate::{pubsub::{self}, text::LineView};
 use crate::state;
-use crate::text::{self, Rev};
+use crate::text::{Rev};
 
 #[derive(Debug, Clone)]
 pub struct HighlightState {

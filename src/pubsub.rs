@@ -1,6 +1,6 @@
-use std::{any::{TypeId, Any}, cell::UnsafeCell, collections::HashMap, marker::PhantomData};
+use std::{any::{TypeId, Any}, collections::HashMap, marker::PhantomData};
 use std::sync::{Arc, Mutex};
-use crossbeam::channel::{self, Receiver, Sender, internal, unbounded};
+use crossbeam::channel::{self, Receiver, Sender};
 use std::fmt;
 
 #[derive(Clone)]
