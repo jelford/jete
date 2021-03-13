@@ -6,8 +6,7 @@ use std::{
     io::{stdin, stdout, Stdin, Stdout, Write},
     usize,
 };
-use syntect::{easy::HighlightLines, highlighting::ThemeSet, parsing::SyntaxSet, util::as_24_bit_terminal_escaped};
-use termion::{clear, color, cursor, input::{Events, MouseTerminal, TermRead}, raw::{IntoRawMode, RawTerminal}, screen};
+use termion::{clear, color, cursor, input::{Events, MouseTerminal, TermRead}, raw::{IntoRawMode, RawTerminal}};
 
 pub fn terminal_display() -> (TerminalDisplay, TerminalInput) {
     assert!(
@@ -69,7 +68,7 @@ impl Display for TerminalDisplay {
             match text_lines.next() {
                 Some(line) => {
                     let txt = line.content_str();
-                    let escaped = hlstate.and_then(|hl| hl.highlighted_line(&line)).unwrap_or(txt);
+                    let escaped = hlstate.and_then(|hl| hl.highlighted_line(&line)).unwrap_or((*txt).clone());
                     write!(
                         self.stdout,
                         "{}{}{}{:2}|{}",

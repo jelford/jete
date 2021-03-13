@@ -270,6 +270,7 @@ name = "jete"
 version = "0.1.0"
 dependencies = [
  "crossbeam",
+ "lazy_static",
  "log",
  "log4rs",
  "syntect",

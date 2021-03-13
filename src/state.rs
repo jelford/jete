@@ -149,26 +149,18 @@ impl<'a> State {
                 let cur_ln = self.cursor_pos.line_number;
                 let cur_col = self.cursor_pos.colmun;
 
-                let l = match self.text.line_mut(cur_ln) {
-                    Some(l) => l,
-                    None => {
-                        self.text.insert_line(cur_ln, "");
-                        self.text
-                            .line_mut(cur_ln)
-                            .expect("Line just inserted doesn't exist")
-                    }
-                };
+                let l = self.text.line_mut_populate(cur_ln);
 
                 assert!(cur_col <= l.char_count());
 
                 let cur_ln = if c == '\n' {
-                    let rest_of_line = l.content_mut().split_off(cur_col);
+                    let rest_of_line = l.split_off(cur_col);
                     self.text.insert_line_from_chars(cur_ln + 1, rest_of_line);
                     self.cursor_pos.line_number += 1;
                     self.cursor_pos.colmun = 0;
                     cur_ln + 1
                 } else {
-                    l.content_mut().insert(cur_col, c);
+                    l.insert(cur_col, c);
                     self.cursor_pos.colmun += 1;
                     cur_ln
                 };

@@ -17,6 +17,8 @@ fn main() {
     let (display, inputs) = terminal_display();
 
     editor::run(file, display, inputs);
+
+    
 }
 
 

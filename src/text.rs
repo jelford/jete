@@ -1,5 +1,14 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap};
 use std::{ops::Deref, usize};
+use std::sync::Once;
+use std::sync::Arc;
+
+use lazy_static::lazy_static;
+
+
+lazy_static! {
+    static ref EMPTY_STRING: Arc<String> = Arc::new(String::new());
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Rev {
@@ -12,44 +21,69 @@ impl Default for Rev {
     }
 }
 
-unsafe impl Sync for Rev {}
 unsafe impl Send for Rev {}
 
 impl Rev {
-    fn bump(&mut self) -> Self {
+    fn bump(mut self) -> Self {
         self.rev += 1;
-        *self
+        self
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LineId {
+    id: u64,
+}
+
+impl Default for LineId {
+    fn default() -> Self {
+        LineId { id: 0 }
+    }
+}
+
+impl LineId {
+    fn bump(mut self) -> Self {
+        self.id += 1;
+        self
+    }
+}
+
+unsafe impl Send for LineId {}
 
 #[derive(Clone)]
 pub struct Text {
     rev: Rev,
-    revs: BTreeMap<usize, Rev>,
+    next_line_id: LineId,
+    revs_before: BTreeMap<usize, Rev>,
     lines: Vec<Line>,
+}
+
+pub struct LineContent {
+    content: Vec<char>,
+    content_string: Arc<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Line {
+    id: LineId,
     content: Vec<char>,
+    content_string: Arc<String>,
 }
 
-impl<S> From<S> for Line
+impl<'a, S> From<S> for LineContent
 where
     S: Into<String>,
 {
     fn from(s: S) -> Self {
         let s = s.into();
-        Line {
+        LineContent {
             content: s.chars().collect(),
+            content_string: Arc::new(s),
         }
     }
 }
 
 impl Line {
-    pub fn from_chars(chars: Vec<char>) -> Self {
-        Line { content: chars }
-    }
 
     pub fn char_count(&self) -> usize {
         self.content.len()
@@ -57,15 +91,30 @@ impl Line {
 
     pub fn remove_char(&mut self, index: usize) {
         self.content.remove(index);
+        self.on_content_change();
     }
 
-    pub fn content_mut(&mut self) -> &mut Vec<char> {
-        &mut self.content
+    pub fn insert(&mut self, index: usize, c: char) {
+        self.content.insert(index, c);
+        self.on_content_change();
     }
+
+    pub fn split_off(&mut self, index: usize) -> Vec<char> {
+        let result = self.content.split_off(index);
+        self.on_content_change();
+        result
+    }
+
 
     pub fn extend_line(&mut self, mut other: Line) {
         assert!(!other.content.contains(&'\n'));
-        self.content_mut().append(other.content_mut())
+        self.content.append(&mut other.content);
+        self.on_content_change();
+    }
+
+    fn on_content_change(&mut self) {
+        let new_content_string = self.content.iter().collect();
+        self.content_string = Arc::new(new_content_string);
     }
 }
 
@@ -77,12 +126,16 @@ pub struct LineView<'a> {
 }
 
 impl<'a> LineView<'a> {
-    pub fn content_str(&self) -> String {
-        self.line.content.iter().collect::<String>()
+    pub fn content_str(&self) -> Arc<String> {
+        self.line.content_string.clone()
     }
 
     pub fn line_number(&self) -> usize {
         self.line_number
+    }
+
+    pub fn id(&self) -> LineId {
+        self.line.id
     }
 
     pub fn rev(&self) -> Rev {
@@ -131,20 +184,34 @@ impl Text {
     pub fn new() -> Self {
         Text {
             rev: Rev::default(),
-            revs: BTreeMap::new(),
+            next_line_id: LineId::default(),
+            revs_before: BTreeMap::new(),
             lines: Vec::new(),
         }
+    }
+
+    fn bump_line_id(&mut self) -> LineId {
+        let ret = self.next_line_id;
+        self.next_line_id = ret.bump();
+        ret
     }
 
     pub fn from(lines: &[String]) -> Self {
         let mut text = Text {
             rev: Rev::default(),
-            revs: BTreeMap::new(),
+            next_line_id: LineId::default(),
+            revs_before: BTreeMap::new(),
             lines: Vec::with_capacity(lines.len()),
         };
 
         for l in lines {
-            text.lines.push(Line::from(l));
+            let l = Line {
+                id: text.bump_line_id(),
+                content: l.chars().collect(),
+                content_string: Arc::new(l.clone()),
+            };
+
+            text.lines.push(l);
         }
 
         text
@@ -153,7 +220,7 @@ impl Text {
     pub fn line(&self, ln_number: usize) -> Option<LineView> {
         let line = self.lines.get(ln_number)?;
         let rev = self
-            .revs
+            .revs_before
             .range(..=ln_number)
             .next_back()
             .map(|(_, r)| *r)
@@ -164,6 +231,27 @@ impl Text {
     pub fn line_mut(&mut self, ln_number: usize) -> Option<&mut Line> {
         self.line_changed(ln_number);
         self.lines.get_mut(ln_number)
+    }
+
+    pub fn line_mut_populate(&mut self, ln_number: usize) -> &mut Line {
+        if self.line_count() > ln_number {
+            self.line_changed(ln_number);
+            &mut self.lines[ln_number]
+        } else {
+            self.rev.bump();
+            let number_of_new_lines = ln_number - self.lines.len() + 1;
+            self.lines.reserve(number_of_new_lines);
+            for _ in 0..number_of_new_lines {
+                let l = Line {
+                    id: self.bump_line_id(),
+                    content: vec![],
+                    content_string: EMPTY_STRING.clone(),
+                };
+                self.lines.push(l);
+            }
+
+            &mut self.lines[ln_number]
+        }
     }
 
     pub fn remove_line(&mut self, ln_number: usize) -> Option<Line> {
@@ -177,15 +265,29 @@ impl Text {
 
     pub fn insert_line<S>(&mut self, ln_number: usize, s: S)
     where
-        S: Into<Line>,
+        S: Into<LineContent>,
     {
+        let lc : LineContent = s.into();
+        let line = Line {
+            id: self.bump_line_id(),
+            content: lc.content,
+            content_string: lc.content_string
+        };
         self.line_changed(ln_number);
-        self.lines.insert(ln_number, s.into());
+        self.lines.insert(ln_number, line);
     }
 
     pub fn insert_line_from_chars(&mut self, ln_number: usize, chars: Vec<char>) {
         self.line_changed(ln_number);
-        self.lines.insert(ln_number, Line::from_chars(chars))
+
+        let line_id = self.bump_line_id();
+        let content_str = Arc::new(chars.iter().collect());
+        
+        self.lines.insert(ln_number, Line {
+            id: line_id,
+            content: chars,
+            content_string: content_str,
+        });
     }
 
     pub fn iter_lines<'a>(&'a self) -> impl Iterator<Item = LineView<'a>> {
@@ -197,7 +299,7 @@ impl Text {
         let lines = self.lines.get(start.max(0)..end.min(self.lines.len()));
         
         LineViewIterator {
-            revs: &self.revs,
+            revs: &self.revs_before,
             lines: lines.unwrap_or(&[]),
             idx: 0,
             starting_line_number: start,
@@ -209,8 +311,8 @@ impl Text {
     }
 
     fn line_changed(&mut self, ln_number: usize) {
-        self.revs.insert(ln_number, self.rev.bump());
-        let _ = self.revs.split_off(&(ln_number + 1));
+        self.revs_before.insert(ln_number, self.rev.bump());
+        let _ = self.revs_before.split_off(&(ln_number + 1));
     }
 }
 
@@ -226,11 +328,11 @@ mod test {
 
 
         let l = t.line(0).expect("inserted line not present");
-        assert_eq!(l.content_str(), "hello");
+        assert_eq!(*l.content_str(), "hello");
 
 
         let l = t.line(1).expect("inserted line not present");
-        assert_eq!(l.content_str(), "world");
+        assert_eq!(*l.content_str(), "world");
     }
 
     
@@ -245,75 +347,24 @@ mod test {
 
         let mut it = t.iter_line_range(0, 5);
 
-        assert_eq!(it.next().map(|lv| lv.content_str()), Some("hello".to_string()));
-        assert_eq!(it.next().map(|lv| lv.content_str()), Some("world".to_string()));
-        assert_eq!(it.next().map(|lv| lv.content_str()), Some("how".to_string()));
-        assert_eq!(it.next().map(|lv| lv.content_str()), Some("are".to_string()));
-        assert_eq!(it.next().map(|lv| lv.content_str()), Some("you".to_string()));
+        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("hello".to_string()));
+        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("world".to_string()));
+        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("how".to_string()));
+        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("are".to_string()));
+        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("you".to_string()));
         assert!(it.next().is_none());
         
         let mut it = t.iter_line_range(0, 2);
         
-        assert_eq!(it.next().map(|lv| lv.content_str()), Some("hello".to_string()));
-        assert_eq!(it.next().map(|lv| lv.content_str()), Some("world".to_string()));
+        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("hello".to_string()));
+        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("world".to_string()));
         assert!(it.next().is_none());
 
 
         let mut it = t.iter_line_range(3, 7);
         
-        assert_eq!(it.next().map(|lv| lv.content_str()), Some("are".to_string()));
-        assert_eq!(it.next().map(|lv| lv.content_str()), Some("you".to_string()));
+        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("are".to_string()));
+        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("you".to_string()));
         assert!(it.next().is_none());
-    }
-
-
-    use std::collections::BTreeMap;
-
-    #[test]
-    fn slice_behaviour() {
-        let mut v = vec!['a', 'b', 'c'];
-
-        let mut cnt = 0;
-        for _ in &v[0..] {
-            cnt += 1;
-        }
-        assert_eq!(cnt, 3);
-
-        let mut cnt = 0;
-        for _ in &v[2..] {
-            cnt += 1;
-        }
-        assert_eq!(cnt, 1);
-
-        let mut cnt = 0;
-        for _ in &v[3..] {
-            cnt += 1;
-        }
-        assert_eq!(cnt, 0);
-
-        let mut cnt = 0;
-        if let Some(rng) = v.get_mut(3..) {
-            for _ in rng {
-                cnt += 1;
-            }
-        }
-        assert_eq!(cnt, 0);
-    }
-
-    #[test]
-    fn btree_behaviour() {
-        let mut bt = BTreeMap::new();
-        bt.insert(0, 'a');
-        bt.insert(5, 'b');
-        bt.insert(20, 'c');
-
-        bt.split_off(&25);
-        let v: Vec<char> = bt.values().cloned().collect();
-        assert_eq!(v, ['a', 'b', 'c']);
-
-        bt.split_off(&15);
-
-        let v: Vec<char> = bt.values().cloned().collect();
-        assert_eq!(v, ['a', 'b'])
     }
 }

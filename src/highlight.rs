@@ -1,9 +1,9 @@
-use std::{collections::BTreeMap, thread, time::Duration};
-
+use std::{borrow::Cow, collections::BTreeMap, thread, time::Duration};
+use std::sync::Arc;
 
 
 use crossbeam::channel;
-use syntect::{easy::HighlightLines, highlighting::{Theme, ThemeSet}, parsing::{SyntaxReference, SyntaxSet}, util::as_24_bit_terminal_escaped};
+use syntect::{easy::HighlightLines, highlighting::{Highlighter, Style, Theme, ThemeSet}, parsing::{ParseState, ScopeStackOp, SyntaxReference, SyntaxSet}, util::as_24_bit_terminal_escaped};
 
 use crate::{pubsub::{self, Hub}, text::LineView};
 use crate::state;
@@ -20,7 +20,11 @@ impl HighlightState {
         if let Some(hl_line) = self.highlighted_lines.get(ln) {
             let rev = line.rev();
             if hl_line.highlighted_rev >= rev {
-                return Some(hl_line.escape_sequence.clone());
+
+
+
+                // let escaped = as_24_bit_terminal_escaped(&hl_line.highlight_ranges[..], false);
+                // return Some(escaped);
             }
         }
 
@@ -34,7 +38,7 @@ impl HighlightState {
 
 #[derive(Debug, Clone)]
 struct HighlightedLine {
-    escape_sequence: String,
+    highlight_ranges: Vec<(usize, ScopeStackOp)>,
     highlighted_rev: Rev,
 }
 
@@ -46,38 +50,6 @@ impl Default for HighlightState {
     }
 }
 
-struct Highlighter {
-    syntax_set: SyntaxSet,
-    theme_set: ThemeSet,
-    hub: Hub,
-}
-
-impl Highlighter {
-    fn highlight(&mut self, text: text::Text) {
-        let theme = &self.theme_set.themes["base16-ocean.dark"];
-        let syntax = self.syntax_set.find_syntax_by_extension("rs").unwrap();
-        let mut highlight = HighlightLines::new(&syntax, theme);
-
-        let mut highlighted_lines = Vec::with_capacity(text.line_count());
-
-        let mut new_state = HighlightState::default();
-
-        for line in text.iter_lines() {
-            let line_text = line.content_str();
-            let ranges =  highlight.highlight(&line_text, &self.syntax_set);
-            let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
-            highlighted_lines.push(HighlightedLine {
-                escape_sequence: escaped,
-                highlighted_rev: line.rev(),
-            });
-        }
-
-        new_state.highlighted_lines.append(&mut highlighted_lines);
-
-
-        self.hub.send(HighlightState::topic(), new_state).unwrap();
-    }
-}
 
 pub fn spawn_highlighter(mut hub: pubsub::Hub) {
 
@@ -92,18 +64,35 @@ pub fn spawn_highlighter(mut hub: pubsub::Hub) {
 
         let syntax_set = SyntaxSet::load_defaults_nonewlines();
         let theme_set = ThemeSet::load_defaults();
+        let theme = &theme_set.themes["base16-ocean.dark"];
+        let syntax = syntax_set.find_syntax_by_extension("rs").unwrap();
 
-        let mut highlighter = Highlighter {
-            syntax_set,
-            theme_set,
-            hub
-        };
+        let _highlighter = Highlighter::new(theme);
         
         log::debug!("setting up highlight thread");
         
-        while let Ok(t) = r.recv() {
+        while let Ok(text) = r.recv() {
             log::debug!("Beginning highlight pass");
-            highlighter.highlight(t);
+            
+            let mut parse_state = ParseState::new(syntax);
+            let mut highlighted_lines = Vec::with_capacity(text.line_count());
+
+            let mut new_state = HighlightState::default();
+
+            for line in text.iter_lines() {
+                let line_text = line.content_str();
+                let ranges = parse_state.parse_line(&line_text, &syntax_set);
+                // let ranges =  highlight.highlight(&line_text, &syntax_set);
+                highlighted_lines.push(HighlightedLine {
+                    highlight_ranges: ranges,
+                    highlighted_rev: line.rev(),
+                });
+            }
+
+            new_state.highlighted_lines.append(&mut highlighted_lines);
+
+
+            hub.send(HighlightState::topic(), new_state).unwrap();
             // let ranges = highlight.highlight(&txt, &ps);
             log::debug!("Highlight pass finished");
         }

@@ -92,7 +92,7 @@ impl HubInternal {
         let mut closed_channels = Vec::new();
         for (i, s) in t.senders.iter().enumerate() {
             let result = s.send(value.clone()).map_err(|_| ());
-            if let Err(e) = result {
+            if let Err(_) = result {
                 closed_channels.push(i);
             }
         }
@@ -103,8 +103,12 @@ impl HubInternal {
         for closed in closed_channels.iter().rev() {
             t.senders.swap_remove(*closed);
         }
-        
-        Ok(())
+
+        if t.senders.len() > 0 {
+            Ok(())
+        } else {
+            Err(())
+        }
     }
 
 
@@ -163,14 +167,20 @@ mod tests {
         let mut h1 = Hub::new();
         let mut h2 = h1.clone();
 
+        let (sync_send, sync_receive) = channel::bounded(0);
+
         let t = std::thread::spawn(move || {
             let r = h2.get_receiver(type_topic::<u8>());
+            sync_send.send(()).expect("Failed trying to signal to main thread that we're ready for assertions");
             let result = r.recv_timeout(Duration::from_millis(30));
             result.unwrap();
         });
 
-        h1.send(type_topic::<u8>(), 12).unwrap();
-
+        sync_receive.recv_timeout(Duration::from_millis(50)).expect("Never got the go-ahead from receiver");
+        h1.send(type_topic::<u8>(), 12).expect("Sending failed - no receiver?");
+        
         t.join().unwrap();
+        
+        h1.send(type_topic::<u8>(), 13).expect_err("Should fail now as no subscribers");
     }
 }

@@ -5,12 +5,12 @@ use crate::{display::Display, highlight};
 use crate::state::{input_map, self, EditorAction};
 use crate::pubsub::{Hub, self};
 use std::thread;
-use crossbeam::channel::select;
+use crossbeam::{channel::select};
 use termion::event::Event;
 
 use crate::userinput::UserInputSource;
 
-pub fn run<Disp: Display+'static, Inputs: UserInputSource>(fname: Option<OsString>, mut d: Disp, mut i: Inputs) {
+pub fn run<Disp: Display, Inputs: UserInputSource>(fname: Option<OsString>, mut d: Disp, mut i: Inputs) {
 
     let mut hub = Hub::new();
     
@@ -26,6 +26,18 @@ pub fn run<Disp: Display+'static, Inputs: UserInputSource>(fname: Option<OsStrin
     let state_hub = hub.clone();
 
     let other_finished = finished.clone();
+
+    thread::spawn(move || {
+        for e in i.events() {
+            let send_result = hub.send(input_topic.clone(), e);
+            if send_result.is_err() {
+                // nobody is listening
+                break;
+            }
+        }
+    });
+
+
     thread::spawn(move || {
         let mut state = match fname {
             None => state::empty(state_hub),
@@ -66,16 +78,7 @@ pub fn run<Disp: Display+'static, Inputs: UserInputSource>(fname: Option<OsStrin
 
         log::debug!("finishing main state thread");
         other_finished.store(true, Ordering::SeqCst);
-    });
-
-    for e in i.events() {
-        hub.send(input_topic.clone(), e).expect("input feed pipe");   
-        if finished.load(Ordering::SeqCst) {
-            break;
-        } else {
-            log::debug!("not finished...");
-        }
-    }
+    }).join().unwrap();
 
     log::debug!("Shutting down");
 }
