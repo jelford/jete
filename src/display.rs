@@ -1,5 +1,5 @@
-use crate::state::State;
+use crate::state::{StateSnapshot};
 
 pub trait Display: Send + 'static {
-    fn update(&mut self, state: &State);
+    fn update(&mut self, state: &StateSnapshot);
 }

@@ -1,9 +1,11 @@
 use std::any::{Any, TypeId};
+use std::sync::Arc;
 
 use ahash::AHashMap;
 
+#[derive(Clone)]
 pub struct TypedStore {
-    values: AHashMap<TypeId, Box<dyn Any>>,
+    values: AHashMap<TypeId, Arc<dyn Any+Send>>,
 }
 
 impl TypedStore {
@@ -14,22 +16,18 @@ impl TypedStore {
         }
     }
 
-    pub fn set<T: 'static>(&mut self, val: T) {
-        let val = Box::new(val);
-        self.set_boxed(val);
-    }
-
-    pub fn set_boxed<T: 'static>(&mut self, val: Box<T>) {
+    pub fn set<T: 'static+Send>(&mut self, val: T) {
         let key = TypeId::of::<T>();
+        let val = Arc::new(val);
         self.values.insert(key, val);
     }
-
-    pub fn get<T: 'static>(&self) -> Option<&T> {
+    
+    pub fn get<T: 'static+Send>(&self) -> Option<&T> {
         let key = TypeId::of::<T>();
         self.get_by_id(key)
     }
 
-    pub fn get_by_id<T: 'static>(&self, key: TypeId) -> Option<&T> {
+    pub fn get_by_id<T: 'static+Send>(&self, key: TypeId) -> Option<&T> {
         self.values.get(&key).map(|any| {
             any.downcast_ref::<T>()
                 .expect("Internal error; type doesn't match TypeId::of::<type>()")

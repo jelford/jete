@@ -6,6 +6,7 @@ use crate::state::{input_map, self, EditorAction};
 use crate::pubsub::{Hub, self};
 use std::thread;
 use crossbeam::{channel::select};
+use state::state_update_topic;
 use termion::event::Event;
 
 use crate::userinput::UserInputSource;
@@ -23,28 +24,35 @@ pub fn run<Disp: Display, Inputs: UserInputSource>(fname: Option<OsString>, mut 
     
     let finished = Arc::new(AtomicBool::new(false));
 
-    let state_hub = hub.clone();
-
+    let mut state_hub = hub.clone();
+    let mut input_hub = hub.clone();
+    let mut display_hub = hub.clone();
+    
     let other_finished = finished.clone();
-
+    
     thread::Builder::new().name("input".into()).spawn(move || {
         for e in i.events() {
-            let send_result = hub.send(input_topic.clone(), e);
+            let send_result = input_hub.send(input_topic.clone(), e);
             if send_result.is_err() {
                 // nobody is listening
                 break;
             }
         }
     }).expect("Failed spawning input listener thread");
+    
+    thread::Builder::new().name("display".into()).spawn(move || {
+        let state_updates = display_hub.get_receiver(state::state_update_topic());
+        for state in state_updates {
+            d.update(&state);
+        }
+    }).expect("Failed to start display thread");
 
 
-    thread::Builder::new().name("core".into()).spawn(move || {
+    let result = thread::Builder::new().name("core".into()).spawn(move || {
         let mut state = match fname {
             None => state::empty(state_hub),
             Some(fname) => state::from_file(&fname, state_hub).expect("Unable to read file"),
         };
-
-        d.update(&state);
 
         loop {
             select! {
@@ -66,21 +74,24 @@ pub fn run<Disp: Display, Inputs: UserInputSource>(fname: Option<OsString>, mut 
                     if let Ok(highlight_state) = syntax {
                         state.dispatch_annotation_update(highlight_state);
                     } else {
-                        log::debug!("highlight pipe closed");
+                        log::warn!("highlight pipe closed");
                         // not fatal
                     }
                 }
             }
-
-            d.update(&state);
         }
-        d.update(&state);
 
         log::debug!("finishing main state thread");
         other_finished.store(true, Ordering::SeqCst);
     }).expect("Failed spawning core editor thread")
-        .join()
-        .expect("Failure on core thread");
+        .join();
+
+    if let Err(e) = result {
+        if let Ok(e) = e.downcast::<String>() {
+            log::error!("Core thread panicked: {}", e);
+        }
+        panic!("Core thread panicked");
+    }
 
     log::debug!("Shutting down");
 }

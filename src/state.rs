@@ -11,9 +11,50 @@ pub fn text_update_topic() -> pubsub::TopicId<Text> {
     pubsub::typed_topic::<Text>("body-text")
 }
 
+pub fn state_update_topic() -> pubsub::TopicId<StateSnapshot> {
+    pubsub::typed_topic("state")
+}
+
+#[derive(Clone)]
 pub struct CursorPos {
     pub line_number: usize,
     pub colmun: usize,
+}
+
+#[derive(Clone)]
+pub struct StateSnapshot {
+    cursor_pos: CursorPos,
+    text: Text,
+    status_text: String,
+    mode: Mode,
+    command_line: String,
+    annotations: TypedStore,
+}
+
+impl StateSnapshot {
+    pub fn cursor_pos(&self) -> &CursorPos {
+        &self.cursor_pos
+    }
+
+    pub fn text(&self) -> &Text {
+        &self.text
+    }
+
+    pub fn mode(&self) -> &Mode {
+        &self.mode
+    }
+
+    pub fn command_line(&self) -> &str {
+        &self.command_line
+    }
+
+    pub fn status_text(&self) -> &str {
+        &self.status_text
+    }
+
+    pub fn annotations(&self) -> &TypedStore {
+        &self.annotations
+    }
 }
 
 pub struct State {
@@ -106,6 +147,7 @@ impl<'a> State {
 
         if let Command::ShiftMode(m) = c {
             self.shift_mode(m);
+            self.notify_change();
             return EditorAction::None;
         }
 
@@ -130,16 +172,30 @@ impl<'a> State {
             },
         };
 
+        self.notify_change();
+
         EditorAction::None
     }
 
-    pub fn dispatch_annotation_update<T: 'static>(&mut self, updated_state: T) {
+    pub fn dispatch_annotation_update<T: 'static+Send>(&mut self, updated_state: T) {
         self.annotations.set(updated_state);
+        self.notify_change();
     }
 
     pub fn annotations<T>(&self) -> Option<&T> 
-        where T: 'static {
+        where T: 'static+Send {
         self.annotations.get()
+    }
+
+    fn notify_change(&mut self) {
+        self.pubsub.send(state_update_topic(), StateSnapshot{
+            cursor_pos: self.cursor_pos.clone(),
+            text: self.text.clone(),
+            status_text: self.status_text.clone(),
+            mode: self.mode.clone(),
+            command_line: self.command_line.clone(),
+            annotations: self.annotations.clone()
+        }).expect("Unable to notify state update");
     }
 
     pub fn insert(&mut self, c: char) {
@@ -168,8 +224,8 @@ impl<'a> State {
 
                 self.status_text = format!(
                     "char: {} @ ({},{})",
-                    cur_ln,
                     if c != '\n' { c as u8 } else { 0 },
+                    cur_ln,
                     cur_col
                 );
             }
@@ -246,7 +302,7 @@ impl<'a> State {
                     let cur_row = self.cursor_pos.line_number;
 
                     if cur_row == 0 {
-                        if self.text.line_count() == 1 && self.text.line(0).unwrap().char_count() == 0 {
+                        if self.text.line_count() == 1 && self.text.line(0).expect("0th line missing").char_count() == 0 {
                             self.text.remove_line(0);
                         }
                         return;
@@ -287,8 +343,8 @@ impl<'a> State {
     }
 
     fn notify_text_change(&mut self) {
-        self.pubsub.send(text_update_topic(), self.text.clone()).unwrap();
-        // self.pubsub.send(text_update_topic(), self.text.clone()).expect("Attempting to publish changes");
+        self.pubsub.send(text_update_topic(), self.text.clone()).expect("failed to publish text update - no listeners");
+        self.notify_change();
     }
 
     pub fn status_text(&self) -> &str {

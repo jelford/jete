@@ -1,5 +1,5 @@
 use crate::display::Display;
-use crate::state::{Mode, State};
+use crate::state::{Mode, StateSnapshot};
 use crate::userinput::{Event, UserInputSource};
 use crate::highlight::HighlightState;
 use std::{
@@ -45,7 +45,7 @@ pub struct TerminalInput {
 }
 
 impl Display for TerminalDisplay {
-    fn update(&mut self, state: &State) {
+    fn update(&mut self, state: &StateSnapshot) {
         log::debug!("Render start");
         let (w, h) = termion::terminal_size().expect("unable to check terminal dimensions");
 
@@ -57,7 +57,7 @@ impl Display for TerminalDisplay {
             .line_number
             .saturating_sub((text_view_height as usize).saturating_sub(1));
 
-        let hlstate = state.annotations::<HighlightState>();
+        let hlstate = state.annotations().get::<HighlightState>();
         let text = state.text();
 
         let mut text_lines = text.iter_line_range(self.top_line, self.top_line.saturating_add(text_view_height as usize));
