@@ -68,7 +68,7 @@ impl Display for TerminalDisplay {
             match text_lines.next() {
                 Some(line) => {
                     let txt = line.content_str();
-                    let escaped = hlstate.and_then(|hl| hl.highlighted_line(&line)).unwrap_or((*txt).clone());
+                    let escaped = hlstate.and_then(|hl| hl.highlighted_line(&line)).unwrap_or(&txt);
                     write!(
                         self.stdout,
                         "{}{}{}{:2}|{}",
@@ -76,7 +76,6 @@ impl Display for TerminalDisplay {
                         cursor::Goto(1, output_line),
                         clear::CurrentLine,
                         line.line_number(),
-                        //&txt[..txt.len().min(w as usize - 1)]
                         &escaped
                     )
 
@@ -84,7 +83,8 @@ impl Display for TerminalDisplay {
                 None => { 
                     write!(
                         self.stdout,
-                        "{}{}{:2}|~",
+                        "{}{}{}{:2}|~",
+                        color::Fg(color::Reset),
                         cursor::Goto(1, output_line),
                         clear::CurrentLine,
                         self.top_line.saturating_add(output_line as usize - 1)
