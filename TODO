@@ -39,13 +39,14 @@
 ## display
 
 - line wrap
-  - lines that go on past edge of screen flow below edit area
+  - lines that go on past edge of screen
 - line numbers unhack
 - highlighting
   - language syntax highlighting
     - Done: async highlighting off-thread
     - Todo: multi-language highlighting
     - Todo: incremental / faster highlighting
+  - bug: status line getting left-over hightlighting
   - bracket matching
 
 
