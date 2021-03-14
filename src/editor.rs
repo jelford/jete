@@ -23,7 +23,6 @@ pub fn run(fname: Option<OsString>) {
     
     let input_topic = pubsub::typed_topic::<Event>("input");
     let inputs = hub.get_receiver(input_topic.clone());
-    let syntax_updates = hub.get_receiver(highlight::HighlightState::topic());
     
     let finished = Arc::new(AtomicBool::new(false));
 
@@ -51,14 +50,6 @@ pub fn run(fname: Option<OsString>) {
                     } else {
                         log::debug!("command pipe closed");
                         break;
-                    }
-                }
-                recv(syntax_updates) -> syntax => {
-                    if let Ok(highlight_state) = syntax {
-                        state.dispatch_annotation_update(highlight_state);
-                    } else {
-                        log::warn!("highlight pipe closed");
-                        // not fatal
                     }
                 }
             }

@@ -2,10 +2,8 @@ use crate::{pubsub::{self, Hub}, text::Text};
 use crate::userinput::{Event, Key};
 use std::{ffi::OsStr};
 use std::fs::OpenOptions;
-use std::sync::Arc;
 use std::io::{self, BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::{fs::File, usize};
-use typedstore::{TypedStore, new_typedstore};
 
 
 pub fn text_update_topic() -> pubsub::TopicId<Text> {
@@ -29,7 +27,6 @@ pub struct StateSnapshot {
     status_text: String,
     mode: Mode,
     command_line: String,
-    annotations: TypedStore,
 }
 
 impl StateSnapshot {
@@ -52,10 +49,6 @@ impl StateSnapshot {
     pub fn status_text(&self) -> &str {
         &self.status_text
     }
-
-    pub fn annotations(&self) -> &TypedStore {
-        &self.annotations
-    }
 }
 
 pub struct State {
@@ -65,7 +58,6 @@ pub struct State {
     mode: Mode,
     command_line: String,
     file: Option<File>,
-    annotations: TypedStore,
     pubsub: Hub,
 }
 
@@ -178,16 +170,6 @@ impl<'a> State {
         EditorAction::None
     }
 
-    pub fn dispatch_annotation_update<T: 'static+Send+Sync>(&mut self, updated_state: T) {
-        self.annotations.set(updated_state);
-        self.notify_change();
-    }
-
-    pub fn annotations<T>(&self) -> Option<Arc<T>> 
-        where T: 'static+Send+Sync {
-        self.annotations.get()
-    }
-
     fn notify_change(&mut self) {
         if let Err(_) = self.pubsub.send(state_update_topic(), StateSnapshot{
             cursor_pos: self.cursor_pos.clone(),
@@ -195,7 +177,6 @@ impl<'a> State {
             status_text: self.status_text.clone(),
             mode: self.mode.clone(),
             command_line: self.command_line.clone(),
-            annotations: self.annotations.clone()
         }) {
             log::debug!("State changed but nobody's listening");
         }
@@ -440,7 +421,6 @@ pub fn empty<'a>(pubsub: Hub) -> State {
         mode: Mode::Normal,
         command_line: String::new(),
         file: None,
-        annotations: new_typedstore(),
         pubsub
     }
 }
@@ -471,7 +451,6 @@ pub fn from_file(fname: &OsStr, pubsub: Hub) -> io::Result<State> {
         mode: Mode::Normal,
         command_line: String::new(),
         file: Some(f),
-        annotations: new_typedstore(),
         pubsub: pubsub,
     };
 

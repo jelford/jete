@@ -17,7 +17,6 @@ license = "GPL-3.0-or-later"
 termion = "1.5"
 crossbeam = "0.8"
 syntect = { version = "4.5", default-features = false, features = ["default-fancy"] }
-typedstore = { path = "./typedstore" }
 log = "0.4"
 log4rs = { version = "1", default-features = false, features = ["file_appender", "pattern_encoder"] }
 lazy_static = "1.4"

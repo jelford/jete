@@ -80,7 +80,9 @@ pub fn spawn_highlighter(mut hub: pubsub::Hub) {
                 highlighted_lines: highlighted_lines,
             };
 
-            hub.send(HighlightState::topic(), new_state).unwrap();
+            if let Err(_) = hub.send(HighlightState::topic(), new_state) {
+                log::debug!("Nobody is listening for highlight updates");
+            }
             
             log::debug!("Highlight pass finished");
         }

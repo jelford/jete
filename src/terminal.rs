@@ -8,7 +8,7 @@ use crossbeam::channel::{after, never};
 use termion::{clear, color, cursor, input::{Events, TermRead}, raw::{IntoRawMode, RawTerminal}};
 use std::thread;
 
-const MILLIS_BUDGET_PER_FRAME: Duration = Duration::from_millis(16);
+const FRAME_BUDGET: Duration = Duration::from_millis(16);
 
 fn terminal_display() -> (TerminalDisplay, TerminalInput) {
     assert!(
@@ -67,26 +67,23 @@ pub fn spawn_interface(hub: pubsub::Hub) -> thread::JoinHandle<()> {
     thread::Builder::new().name("display".into()).spawn(move || {
         let update_topic = state_update_topic();
         let state_receiver = display_hub.get_receiver(update_topic);
+        let highlight_receiver = display_hub.get_receiver(crate::highlight::HighlightState::topic());
         let shutdown_receiver = display_hub.get_receiver(crate::editor::shutdown_event_topic());
 
         log::debug!("Initializing display thread");
 
-        let mut last_state = None;
-        let start_time = Instant::now();
-        let mut deadline: Option<Instant> = Some(start_time.checked_add(MILLIS_BUDGET_PER_FRAME).unwrap());
+        let mut last_state = StateForDisplay {
+            editor_state: None,
+            highlighter_state: None,
+        };
 
-        log::debug!("Setting next render deadline: {:?}", deadline);
-
+        let mut render = RenderDeadline::new(FRAME_BUDGET);
+        
         loop {
             let now = Instant::now();
-            log::debug!("It's now: {:?}. Deadline is: {:?}", now, deadline);
-            if deadline.is_none() {
-                log::debug!("No current deadline");
-            }
+            log::debug!("It's now: {:?}. Deadline is: {:?}", now, render.deadline());
             
-            let time_until_deadline = 
-                deadline.map(
-                    |d| d.checked_duration_since(now).unwrap_or(Duration::from_millis(0)));
+            let time_until_deadline = render.duration_until_deadline();
 
             select! {
                 recv(shutdown_receiver) -> _ => {
@@ -100,142 +97,203 @@ pub fn spawn_interface(hub: pubsub::Hub) -> thread::JoinHandle<()> {
                     }
                     // the next frame deadline is when now_millis - start_millis % 16 == 0
                     // or whatever the current deadline is
-                    last_state = Some(msg.unwrap());
-                    if deadline.is_some() {
-                        log::debug!("Deadline already set...");
-                        continue;
-                    }
-                    let now = Instant::now();
-                    let millis_in = now.checked_duration_since(start_time).unwrap_or(Duration::from_millis(0)).as_millis() % MILLIS_BUDGET_PER_FRAME.as_millis();
-                    let mut time_until_next_deadline = Duration::from_millis((MILLIS_BUDGET_PER_FRAME.as_millis() - millis_in) as u64);
-                    if time_until_next_deadline < Duration::from_millis(2) {
-                        log::debug!("Dropping a frame as we're close to deadline");
-                        time_until_next_deadline = time_until_next_deadline + MILLIS_BUDGET_PER_FRAME;
-                    }
-                    let next_deadline: Instant = 
-                        now
-                            .checked_add(time_until_next_deadline)
-                            .expect("We have reached the end of time.");
-                    
-                    log::debug!("Set next deadline: {:?} ({}ms)", next_deadline, time_until_next_deadline.as_millis());
-                    deadline = Some(next_deadline);
+                    last_state.editor_state = Some(msg.unwrap());
+                    render.trigger();
+                },
+                recv(highlight_receiver) -> msg => {
+                    match msg {
+                        Err(e) => {
+                            log::debug!("Error on highlight receiver: {}", e);
+                        },
+                        Ok(msg) => {
+                            last_state.highlighter_state = Some(msg);
+                            render.trigger();
+                        },
+                    };
                 },
                 recv(time_until_deadline.map(|d| after(d)).unwrap_or(never())) -> _timeout => {
                     log::debug!("Hit deadline for render");
-
-                    if let Some(s) = last_state.take() {
-                        display.update(s);
-                    } else {
-                        log::debug!("Reached render deadline but no state waiting");
-                    }
-                    deadline = None;
+                    
+                    display.update(&last_state);
+                    render.clear_deadline();
                 }
             }
         }
     }).expect("Failed spawning input listener thread")
 }
 
+struct RenderDeadline {
+    deadline: Option<Instant>,
+    millis_budget: u128,
+    start_time: Instant,
+}
+
+impl RenderDeadline {
+    fn new(time_between_deadlines: Duration) -> Self {
+        RenderDeadline {
+            deadline: None,
+            millis_budget: time_between_deadlines.as_millis(),
+            start_time: Instant::now(),
+        }
+    }
+
+    fn trigger(&mut self) {
+        if self.deadline.is_some() {
+            log::debug!("Deadline already set");
+            return;
+        }
+
+        let now = Instant::now();
+        let millis_in = 
+            now
+                .checked_duration_since(self.start_time)
+                .unwrap_or(Duration::from_millis(0)).as_millis() % self.millis_budget;
+
+        let mut time_until_next_deadline = Duration::from_millis((self.millis_budget - millis_in) as u64);
+        if time_until_next_deadline < Duration::from_millis(2) {
+            log::debug!("Dropping a frame as we're close to deadline");
+            time_until_next_deadline = time_until_next_deadline + FRAME_BUDGET;
+        }
+
+        let next_deadline: Instant = 
+            now
+                .checked_add(time_until_next_deadline)
+                .expect("We have reached the end of time.");
+        
+        log::debug!("Set next deadline: {:?} ({}ms)", next_deadline, time_until_next_deadline.as_millis());
+        self.deadline = Some(next_deadline);
+    }
+
+    fn deadline(&self) -> &Option<Instant> {
+        &self.deadline
+    }
+
+    fn duration_until_deadline(&self) -> Option<Duration> {
+        let now = Instant::now();
+        self.deadline.map(|deadline| {
+            deadline
+                .checked_duration_since(now)
+                .unwrap_or(Duration::from_millis(0))
+        })
+    }
+
+    fn clear_deadline(&mut self) {
+        self.deadline = None;
+    }
+
+
+}
+
+struct StateForDisplay {
+    editor_state: Option<StateSnapshot>,
+    highlighter_state: Option<HighlightState>,
+}
+
 impl TerminalDisplay {
-    fn update(&mut self, state: StateSnapshot) {
+    fn update(&mut self, state: &StateForDisplay) {
         log::debug!("Render start");
         let (w, h) = termion::terminal_size().expect("unable to check terminal dimensions");
 
         let lines_at_bottom = 2u16;
         let text_view_height = h - lines_at_bottom;
-        let cursor_pos = state.cursor_pos();
 
-        self.top_line = cursor_pos
-            .line_number
-            .saturating_sub((text_view_height as usize).saturating_sub(1));
+        if let Some(editor_state) = &state.editor_state {
 
-        let hlstate = state.annotations().get::<HighlightState>();
-        let text = state.text();
+            let cursor_pos = editor_state.cursor_pos();
 
-        let mut text_lines = text.iter_line_range(self.top_line, self.top_line.saturating_add(text_view_height as usize));
-        let mut output_line = 1;
+            self.top_line = cursor_pos
+                .line_number
+                .saturating_sub((text_view_height as usize).saturating_sub(1));
 
-       
-        while output_line < text_view_height {
-            match text_lines.next() {
-                Some(line) => {
-                    let txt = line.content_str();
+            let hlstate = &state.highlighter_state;
+            let text = editor_state.text();
 
-                    let escaped = 
-                        hlstate
-                            .as_ref()
-                            .and_then(|hls| hls.highlighted_line(&line))
-                            .unwrap_or(&txt);
+            let mut text_lines = text.iter_line_range(self.top_line, self.top_line.saturating_add(text_view_height as usize));
+            let mut output_line = 1;
 
-                    write!(
-                        self.stdout,
-                        "{}{}{}{:2}|{}",
-                        color::Fg(color::Reset),
-                        cursor::Goto(1, output_line),
-                        clear::CurrentLine,
-                        line.line_number(),
-                        &escaped
-                    )
+        
+            while output_line < text_view_height {
+                match text_lines.next() {
+                    Some(line) => {
+                        let txt = line.content_str();
 
-                },
-                None => { 
-                    write!(
-                        self.stdout,
-                        "{}{}{}{:2}|~",
-                        color::Fg(color::Reset),
-                        cursor::Goto(1, output_line),
-                        clear::CurrentLine,
-                        self.top_line.saturating_add(output_line as usize - 1)
-                    )
-                }
-            }.expect("Unable to write to main text area");
-            output_line += 1;
-        }
+                        let escaped = 
+                            hlstate
+                                .as_ref()
+                                .and_then(|hls| hls.highlighted_line(&line))
+                                .unwrap_or(&txt);
 
+                        write!(
+                            self.stdout,
+                            "{}{}{}{:2}|{}",
+                            color::Fg(color::Reset),
+                            cursor::Goto(1, output_line),
+                            clear::CurrentLine,
+                            line.line_number(),
+                            &escaped
+                        )
 
-        write!(
-            self.stdout,
-            "{}{}",
-            cursor::Goto(1, h - 1),
-            clear::CurrentLine
-        )
-        .unwrap();
+                    },
+                    None => { 
+                        write!(
+                            self.stdout,
+                            "{}{}{}{:2}|~",
+                            color::Fg(color::Reset),
+                            cursor::Goto(1, output_line),
+                            clear::CurrentLine,
+                            self.top_line.saturating_add(output_line as usize - 1)
+                        )
+                    }
+                }.expect("Unable to write to main text area");
+                output_line += 1;
+            }
 
-        if state.mode() == &Mode::Command {
-            let command_text = state.command_line();
-            let command_text_disp = &command_text[command_text.len().saturating_sub(w as usize)..];
-            write!(
-                self.stdout,
-                "{}{}:{}",
-                cursor::Goto(1, h),
-                clear::CurrentLine,
-                command_text_disp
-            )
-            .unwrap();
-        } else {
-            let status_text = state.status_text();
-            let status_text_disp = &status_text[..status_text.len().min(w as usize - 1)];
-            write!(
-                self.stdout,
-                "{}{}{}\t{:?}\t(l:{},c:{})",
-                cursor::Goto(1, h),
-                clear::CurrentLine,
-                status_text_disp,
-                state.mode(),
-                cursor_pos.line_number,
-                cursor_pos.colmun
-            )
-            .unwrap();
-
-            let display_cursor_ln =
-                (1 + (cursor_pos.line_number - self.top_line) as u16).clamp(1, text_view_height);
-            let display_cursor_col = (1 + cursor_pos.colmun as u16 + 3).clamp(1, w);
 
             write!(
                 self.stdout,
-                "{}",
-                cursor::Goto(display_cursor_col, display_cursor_ln)
+                "{}{}",
+                cursor::Goto(1, h - 1),
+                clear::CurrentLine
             )
             .unwrap();
+
+            if editor_state.mode() == &Mode::Command {
+                let command_text = editor_state.command_line();
+                let command_text_disp = &command_text[command_text.len().saturating_sub(w as usize)..];
+                write!(
+                    self.stdout,
+                    "{}{}:{}",
+                    cursor::Goto(1, h),
+                    clear::CurrentLine,
+                    command_text_disp
+                )
+                .unwrap();
+            } else {
+                let status_text = editor_state.status_text();
+                let status_text_disp = &status_text[..status_text.len().min(w as usize - 1)];
+                write!(
+                    self.stdout,
+                    "{}{}{}\t{:?}\t(l:{},c:{})",
+                    cursor::Goto(1, h),
+                    clear::CurrentLine,
+                    status_text_disp,
+                    editor_state.mode(),
+                    cursor_pos.line_number,
+                    cursor_pos.colmun
+                )
+                .unwrap();
+
+                let display_cursor_ln =
+                    (1 + (cursor_pos.line_number - self.top_line) as u16).clamp(1, text_view_height);
+                let display_cursor_col = (1 + cursor_pos.colmun as u16 + 3).clamp(1, w);
+
+                write!(
+                    self.stdout,
+                    "{}",
+                    cursor::Goto(display_cursor_col, display_cursor_ln)
+                )
+                .unwrap();
+            }
         }
 
         self.stdout.flush().unwrap();
