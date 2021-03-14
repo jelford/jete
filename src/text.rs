@@ -1,5 +1,5 @@
-use std::{any::Any, cmp::{self, max}, collections::BTreeMap, marker::PhantomData};
-use std::{ops::Deref, usize};
+use std::{any::Any, cmp::{self}, collections::BTreeMap, marker::PhantomData};
+use std::{usize};
 
 use std::sync::Arc;
 
