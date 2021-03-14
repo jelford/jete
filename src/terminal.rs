@@ -223,56 +223,48 @@ impl TerminalDisplay {
                                 .and_then(|hls| hls.highlighted_line(&line))
                                 .unwrap_or(&txt);
 
-                        write!(
-                            self.stdout,
+                        self.stdout.write_fmt(format_args!(
                             "{}{}{}{:2}|{}",
                             color::Fg(color::Reset),
                             cursor::Goto(1, output_line),
                             clear::CurrentLine,
                             line.line_number(),
                             &escaped
-                        )
-
+                        ))
                     },
                     None => { 
-                        write!(
-                            self.stdout,
+                        self.stdout.write_fmt(format_args!(
                             "{}{}{}{:2}|~",
                             color::Fg(color::Reset),
                             cursor::Goto(1, output_line),
                             clear::CurrentLine,
                             self.top_line.saturating_add(output_line as usize - 1)
-                        )
+                        ))
                     }
                 }.expect("Unable to write to main text area");
                 output_line += 1;
             }
 
 
-            write!(
-                self.stdout,
+            self.stdout.write_fmt(format_args!(
                 "{}{}",
                 cursor::Goto(1, h - 1),
                 clear::CurrentLine
-            )
-            .unwrap();
+            )).unwrap();
 
             if editor_state.mode() == &Mode::Command {
                 let command_text = editor_state.command_line();
                 let command_text_disp = &command_text[command_text.len().saturating_sub(w as usize)..];
-                write!(
-                    self.stdout,
+                self.stdout.write_fmt(format_args!(
                     "{}{}:{}",
                     cursor::Goto(1, h),
                     clear::CurrentLine,
                     command_text_disp
-                )
-                .unwrap();
+                )).unwrap();
             } else {
                 let status_text = editor_state.status_text();
                 let status_text_disp = &status_text[..status_text.len().min(w as usize - 1)];
-                write!(
-                    self.stdout,
+                self.stdout.write_fmt(format_args!(
                     "{}{}{}\t{:?}\t(l:{},c:{})",
                     cursor::Goto(1, h),
                     clear::CurrentLine,
@@ -280,19 +272,16 @@ impl TerminalDisplay {
                     editor_state.mode(),
                     cursor_pos.line_number,
                     cursor_pos.colmun
-                )
-                .unwrap();
+                )).unwrap();
 
                 let display_cursor_ln =
                     (1 + (cursor_pos.line_number - self.top_line) as u16).clamp(1, text_view_height);
                 let display_cursor_col = (1 + cursor_pos.colmun as u16 + 3).clamp(1, w);
 
-                write!(
-                    self.stdout,
+                self.stdout.write_fmt(format_args!(
                     "{}",
                     cursor::Goto(display_cursor_col, display_cursor_ln)
-                )
-                .unwrap();
+                )).unwrap();
             }
         }
 
@@ -316,12 +305,11 @@ impl Iterator for TerminalInput {
 
 impl Drop for TerminalDisplay {
     fn drop(&mut self) {
-        let _ = write!(
-            self.stdout,
+        let _ = self.stdout.write_fmt(format_args!(
             "{}{}",
             cursor::Goto(1, 1),
             clear::AfterCursor
-        );
+        ));
         let _ = self.stdout.flush();
     }
 }

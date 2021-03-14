@@ -32,6 +32,15 @@ fn configure_logging() {
     
     let _ = log4rs::init_config(config).unwrap();
 
+    let existing_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |pi| {
+        let (file, line) = pi.location().map(|l| (l.file(), l.line())).unwrap_or(("unknown", 0));
+        let msg = pi.payload().downcast_ref::<&str>().unwrap_or(&"(no message)");
+        log::error!("panic occurred [{}:{}]: {}", file, line, msg);
+
+        existing_hook(pi);
+    }));
+
     log::debug!("logging initialized");
 
 }
