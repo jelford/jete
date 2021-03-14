@@ -212,7 +212,7 @@ impl TerminalDisplay {
             let mut output_line = 1;
 
         
-            while output_line < text_view_height {
+            while output_line <= text_view_height {
                 match text_lines.next() {
                     Some(line) => {
                         let txt = line.content_str();

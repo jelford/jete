@@ -5,7 +5,7 @@
 - replace lines: Vec<String> -> a cow structure like a rope
   - should work with file mmapped
 - offload "write" to be external from state
-  - wait for COW text structure
+  - done: wait for COW text structure
 
 ## core text editing
 
@@ -39,6 +39,7 @@
 ## display
 
 - line wrap
+  - lines that go on past edge of screen flow below edit area
 - line numbers unhack
 - highlighting
   - language syntax highlighting
