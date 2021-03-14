@@ -1,4 +1,4 @@
-use crate::{pubsub::{self, Hub}, text::Text};
+use crate::{pubsub::{self, Hub}, text::{Text, TextView}};
 use crate::userinput::{Event, Key};
 use std::{ffi::OsStr};
 use std::fs::OpenOptions;
@@ -6,8 +6,8 @@ use std::io::{self, BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::{fs::File, usize};
 
 
-pub fn text_update_topic() -> pubsub::TopicId<Text> {
-    pubsub::typed_topic::<Text>("body-text")
+pub fn text_update_topic() -> pubsub::TopicId<TextView> {
+    pubsub::typed_topic("body-text")
 }
 
 pub fn state_update_topic() -> pubsub::TopicId<StateSnapshot> {
@@ -23,7 +23,7 @@ pub struct CursorPos {
 #[derive(Clone)]
 pub struct StateSnapshot {
     cursor_pos: CursorPos,
-    text: Text,
+    text: TextView,
     status_text: String,
     mode: Mode,
     command_line: String,
@@ -34,7 +34,7 @@ impl StateSnapshot {
         &self.cursor_pos
     }
 
-    pub fn text(&self) -> &Text {
+    pub fn text(&self) -> &TextView {
         &self.text
     }
 
@@ -173,7 +173,7 @@ impl<'a> State {
     fn notify_change(&mut self) {
         if let Err(_) = self.pubsub.send(state_update_topic(), StateSnapshot{
             cursor_pos: self.cursor_pos.clone(),
-            text: self.text.clone(),
+            text: self.text.view(),
             status_text: self.status_text.clone(),
             mode: self.mode.clone(),
             command_line: self.command_line.clone(),
@@ -327,7 +327,7 @@ impl<'a> State {
     }
 
     fn notify_text_change(&mut self) {
-        if let Err(_) = self.pubsub.send(text_update_topic(), self.text.clone()) {
+        if let Err(_) = self.pubsub.send(text_update_topic(), self.text.view()) {
             log::debug!("Text updated but nobody's listening");
         }
         self.notify_change();

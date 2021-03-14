@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap};
+use std::{any::Any, cmp::{self, max}, collections::BTreeMap, marker::PhantomData};
 use std::{ops::Deref, usize};
 
 use std::sync::Arc;
@@ -52,13 +52,18 @@ impl LineId {
     }
 }
 
-#[derive(Clone)]
+struct NoSend(PhantomData<dyn Any>);
+
+const NO_SEND: NoSend = NoSend(PhantomData);
+
 pub struct Text {
     rev: Rev,
     next_line_id: LineId,
     revs_before: BTreeMap<usize, Rev>,
     lines: Vec<Line>,
+    _nosend: NoSend,
 }
+
 
 pub struct LineContent {
     content: Vec<char>,
@@ -87,6 +92,10 @@ where
 }
 
 impl Line {
+
+    pub fn rev(&self) -> Rev {
+        self.rev
+    }
 
     pub fn content_string(&self) -> Arc<String> {
         self.content_string.clone()
@@ -125,16 +134,18 @@ impl Line {
     }
 }
 
-#[derive(Debug)]
-pub struct LineView<'a> {
-    line: &'a Line,
+#[derive(Debug, Clone)]
+pub struct LineView {
     max_rev_before: Rev,
     line_number: usize,
+    content_string: Arc<String>,
+    line_id: LineId,
+    line_rev: Rev,
 }
 
-impl<'a> LineView<'a> {
+impl LineView {
     pub fn content_str(&self) -> Arc<String> {
-        self.line.content_string.clone()
+        self.content_string.clone()
     }
 
     pub fn line_number(&self) -> usize {
@@ -142,11 +153,11 @@ impl<'a> LineView<'a> {
     }
 
     pub fn id(&self) -> LineId {
-        self.line.id
+        self.line_id
     }
 
     pub fn rev(&self) -> Rev {
-        self.line.rev
+        self.line_rev
     }
 
     pub fn max_rev_before(&self) -> Rev {
@@ -154,38 +165,45 @@ impl<'a> LineView<'a> {
     }
 }
 
-impl<'a> Deref for LineView<'a> {
-    type Target = Line;
 
-    fn deref(&self) -> &Line {
-        self.line
+pub struct LineViewIterator {
+    lines: Arc<Vec<LineView>>,
+    idx: usize,
+    end: usize,
+}
+
+
+impl<'a> Iterator for LineViewIterator {
+    type Item = LineView;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.idx >= self.end {
+            None
+        } else {
+            let ret = self.lines.get(self.idx).map(|lv| lv.clone());
+            self.idx += 1;
+            ret
+        }
     }
 }
 
-
-pub struct LineViewIterator<'a> {
-    revs: &'a BTreeMap<usize, Rev>,
-    lines: &'a [Line],
-    idx: usize,
-    starting_line_number: usize,
+/// I represent a read-only view on Text data at a point in time
+#[derive(Clone)]
+pub struct TextView {
+    rev: Rev,
+    lines: Arc<Vec<LineView>>,
 }
 
+impl TextView {
+    pub fn iter_lines<'a>(&self) -> impl Iterator<Item = LineView> {
+        self.iter_line_range(0, self.lines.len())
+    }
 
-impl<'a> Iterator for LineViewIterator<'a> {
-    type Item = LineView<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.idx >= self.lines.len() {
-            None
-        } else {
-            let line = &self.lines[self.idx];
-            let rev = self.revs.range(..=self.idx).next_back().map(|(_, r)| *r).unwrap_or(Rev::default());
-            let line_number = self.starting_line_number + self.idx;
-            let ret = LineView {
-                line, max_rev_before: rev, line_number,
-            };
-            self.idx += 1;
-            Some(ret)
+    pub fn iter_line_range(&self, start: usize, end: usize) -> impl Iterator<Item=LineView> {
+        LineViewIterator {
+            lines: self.lines.clone(),
+            idx: start,
+            end: self.lines.len().min(end), 
         }
     }
 }
@@ -198,6 +216,7 @@ impl Text {
             next_line_id: LineId::default(),
             revs_before: BTreeMap::new(),
             lines: Vec::new(),
+            _nosend: NO_SEND,
         }
     }
 
@@ -217,6 +236,7 @@ impl Text {
             next_line_id: LineId::default(),
             revs_before: BTreeMap::new(),
             lines: Vec::with_capacity(lines.len()),
+            _nosend: NO_SEND,
         };
 
         for l in lines {
@@ -233,15 +253,8 @@ impl Text {
         text
     }
 
-    pub fn line(&self, ln_number: usize) -> Option<LineView> {
-        let line = self.lines.get(ln_number)?;
-        let rev = self
-            .revs_before
-            .range(..=ln_number)
-            .next_back()
-            .map(|(_, r)| *r)
-            .unwrap_or_default();
-        Some(LineView { max_rev_before: rev, line , line_number: ln_number})
+    pub fn line(&self, ln_number: usize) -> Option<&Line> {
+        self.lines.get(ln_number)
     }
 
     pub fn line_mut(&mut self, ln_number: usize) -> Option<&mut Line> {
@@ -315,22 +328,6 @@ impl Text {
         self.line_changed(ln_number);
     }
 
-    pub fn iter_lines<'a>(&'a self) -> impl Iterator<Item = LineView<'a>> {
-        (0..self.lines.len()).map(move |i| self.line(i).unwrap())
-    }
-
-    pub fn iter_line_range<'a>(&'a self, start: usize, end: usize) -> LineViewIterator<'a> {
-
-        let lines = self.lines.get(start.max(0)..end.min(self.lines.len()));
-        
-        LineViewIterator {
-            revs: &self.revs_before,
-            lines: lines.unwrap_or(&[]),
-            idx: 0,
-            starting_line_number: start,
-        }
-    }
-
     pub fn line_count(&self) -> usize {
         self.lines.len()
     }
@@ -338,6 +335,36 @@ impl Text {
     fn line_changed(&mut self, ln_number: usize) {
         self.revs_before.insert(ln_number, self.rev);
         let _ = self.revs_before.split_off(&(ln_number + 1));
+    }
+
+    pub fn view(&self) -> TextView {
+        let mut line_views = Vec::with_capacity(self.lines.len());
+        let mut max_rev_so_far = Rev::default();
+        for (ln_number, ln) in self.lines.iter().enumerate() {
+
+            max_rev_so_far = cmp::max(ln.rev, max_rev_so_far);
+
+            line_views.push(LineView {
+                max_rev_before: max_rev_so_far,
+                line_number: ln_number,
+                content_string: ln.content_string.clone(),
+                line_id: ln.id,
+                line_rev: ln.rev,
+            })
+        }
+
+        TextView {
+            rev: self.rev,
+            lines: Arc::new(line_views),
+        }
+    }
+
+    pub fn iter_lines(&self) -> impl Iterator<Item=LineView> {
+        self.view().iter_lines()
+    }
+
+    pub fn iter_line_range(&self, start: usize, end: usize) -> impl Iterator<Item=LineView> {
+        self.view().iter_line_range(start, end)
     }
 }
 
@@ -353,11 +380,11 @@ mod test {
 
 
         let l = t.line(0).expect("inserted line not present");
-        assert_eq!(*l.content_str(), "hello");
+        assert_eq!(*l.content_string(), "hello");
 
 
         let l = t.line(1).expect("inserted line not present");
-        assert_eq!(*l.content_str(), "world");
+        assert_eq!(*l.content_string(), "world");
     }
 
     
@@ -427,17 +454,19 @@ mod test {
             max_so_far = max_so_far.max(l.max_rev_before());
         }
 
-        assert_eq!(t.line(0).unwrap().rev(), Rev::from(1));
-        assert_eq!(t.line(1).unwrap().rev(), Rev::from(2));
-        assert_eq!(t.line(2).unwrap().rev(), Rev::from(5));
-        assert_eq!(t.line(3).unwrap().rev(), Rev::from(4));
+        let mut line_iter = t.iter_lines();
+        assert_eq!(line_iter.next().unwrap().rev(), Rev::from(1));
+        assert_eq!(line_iter.next().unwrap().rev(), Rev::from(2));
+        assert_eq!(line_iter.next().unwrap().rev(), Rev::from(5));
+        assert_eq!(line_iter.next().unwrap().rev(), Rev::from(4));
+        assert!(line_iter.next().is_none());
         
-        assert_eq!(t.line(0).unwrap().max_rev_before(), Rev::from(1));
-        assert_eq!(t.line(1).unwrap().max_rev_before(), Rev::from(2));
-        assert_eq!(t.line(2).unwrap().max_rev_before(), Rev::from(5));
-        assert_eq!(t.line(3).unwrap().max_rev_before(), Rev::from(5));
-        
-        assert!(t.line(4).is_none());
+        let mut line_iter = t.iter_lines();
+        assert_eq!(line_iter.next().unwrap().max_rev_before(), Rev::from(1));
+        assert_eq!(line_iter.next().unwrap().max_rev_before(), Rev::from(2));
+        assert_eq!(line_iter.next().unwrap().max_rev_before(), Rev::from(5));
+        assert_eq!(line_iter.next().unwrap().max_rev_before(), Rev::from(5));
+        assert!(line_iter.next().is_none());
         
     }
 }
