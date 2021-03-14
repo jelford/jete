@@ -1,5 +1,4 @@
 use jete::editor;
-use jete::terminal::terminal_display;
 use std::{env};
 use log::LevelFilter;
 use log4rs::append::file::FileAppender;
@@ -14,17 +13,15 @@ fn main() {
 
     let file = args.next();
 
-    let (display, inputs) = terminal_display();
+    // let (display, inputs) = terminal_display();
 
-    editor::run(file, display, inputs);
-
-    
+    editor::run(file);    
 }
 
 
 fn configure_logging() {
     let log_file = FileAppender::builder()
-        .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S%.3f)} {l} {t} [{T}] - {m}{n}")))
+        .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S%.3f)} {l} {t} [{T}:{I}] - {m}{n}")))
         .build("jete.log")
         .unwrap();
 

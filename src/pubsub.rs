@@ -57,11 +57,9 @@ pub struct Hub {
     internal: Arc<Mutex<HubInternal>>
 }
 
-unsafe impl Send for Hub {}
-unsafe impl Sync for Hub {}
 
 struct HubInternal {
-    topics: HashMap<TopicIdInternal, Box<dyn Any>>,
+    topics: HashMap<TopicIdInternal, Box<dyn Any+Send>>,
 }
 
 impl Hub {
@@ -71,29 +69,16 @@ impl Hub {
         }
     }
 
-    pub fn send<T: 'static+ Clone>(&mut self, topic: TopicId<T>, value: T) -> Result<(), ()> {
+    pub fn send<T: 'static+ Clone + Send>(&mut self, topic: TopicId<T>, value: T) -> Result<(), ()> {
         let mut internal = self.internal.lock().unwrap();
         internal.send(topic, value)
     }
 
-    pub fn get_receiver<T: 'static>(&mut self, topic: TopicId<T>) -> Receiver<T> {
+    pub fn get_receiver<T: 'static + Send>(&mut self, topic: TopicId<T>) -> Receiver<T> {
         let mut internal = self.internal.lock().unwrap();
         internal.get_receiver(topic)
     }
 
-}
-
-pub struct TopicReceiver<T: 'static> {
-    receiver: Receiver<Box<dyn Any>>,
-    _type: PhantomData<T>,
-}
-
-impl<T> TopicReceiver<T> {
-    pub fn recv(&self) -> Result<T, ()> {
-        let raw = self.receiver.recv().unwrap();
-        let box_t = raw.downcast::<T>().unwrap();
-        Ok(*box_t)
-    }
 }
 
 impl HubInternal {
@@ -101,7 +86,7 @@ impl HubInternal {
         HubInternal {topics: HashMap::new() }
     }
 
-    fn send<T: 'static + Clone>(&mut self, topic: TopicId<T>, value: T) -> Result<(), ()> {
+    fn send<T: 'static + Clone + Send>(&mut self, topic: TopicId<T>, value: T) -> Result<(), ()> {
         log::debug!("Sending update on topic: {}", topic);
         let t = self.get_or_create_topic(&topic);
 
@@ -128,7 +113,7 @@ impl HubInternal {
     }
 
 
-    fn get_receiver<T: 'static>(&mut self, topic: TopicId<T>) -> Receiver<T> {
+    fn get_receiver<T: 'static + Send>(&mut self, topic: TopicId<T>) -> Receiver<T> {
         log::debug!("Giving out receiver for {}", topic);
         let t = self.get_or_create_topic(&topic);
         let (s, r) = channel::unbounded();
@@ -136,7 +121,7 @@ impl HubInternal {
         r
     }
 
-    fn get_or_create_topic<T: 'static>(&mut self, topic: &TopicId<T>) -> &mut Topic<T> {
+    fn get_or_create_topic<T: 'static + Send>(&mut self, topic: &TopicId<T>) -> &mut Topic<T> {
         self.topics.entry(topic.id).or_insert_with(|| {
             log::debug!("Setting up channel for {}", topic);
             let t : Topic<T> = Topic {

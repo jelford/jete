@@ -2,6 +2,7 @@ use crate::{pubsub::{self, Hub}, text::Text};
 use crate::userinput::{Event, Key};
 use std::{ffi::OsStr};
 use std::fs::OpenOptions;
+use std::sync::Arc;
 use std::io::{self, BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::{fs::File, usize};
 use typedstore::{TypedStore, new_typedstore};
@@ -177,13 +178,13 @@ impl<'a> State {
         EditorAction::None
     }
 
-    pub fn dispatch_annotation_update<T: 'static+Send>(&mut self, updated_state: T) {
+    pub fn dispatch_annotation_update<T: 'static+Send+Sync>(&mut self, updated_state: T) {
         self.annotations.set(updated_state);
         self.notify_change();
     }
 
-    pub fn annotations<T>(&self) -> Option<&T> 
-        where T: 'static+Send {
+    pub fn annotations<T>(&self) -> Option<Arc<T>> 
+        where T: 'static+Send+Sync {
         self.annotations.get()
     }
 
@@ -362,6 +363,7 @@ impl<'a> State {
     pub fn shift_mode(&mut self, m: Mode) {
         self.mode = m;
         self.command_line.clear();
+        self.notify_change();
     }
 
     pub fn move_cursor(&mut self, direction: (isize, isize)) {

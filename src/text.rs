@@ -27,8 +27,6 @@ impl Default for Rev {
     }
 }
 
-unsafe impl Send for Rev {}
-
 impl Rev {
     fn bump(mut self) -> Self {
         self.rev += 1;
@@ -53,8 +51,6 @@ impl LineId {
         self
     }
 }
-
-unsafe impl Send for LineId {}
 
 #[derive(Clone)]
 pub struct Text {

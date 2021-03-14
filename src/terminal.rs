@@ -1,28 +1,27 @@
-use crate::display::Display;
-use crate::state::{Mode, StateSnapshot};
-use crate::userinput::{Event, UserInputSource};
+use crate::{pubsub, userinput::{self}};
+use crate::state::{Mode, StateSnapshot, state_update_topic};
+use crate::userinput::{Event};
 use crate::highlight::HighlightState;
-use std::{
-    io::{stdin, stdout, Stdin, Stdout, Write},
-    usize,
-};
-use termion::{clear, color, cursor, input::{Events, MouseTerminal, TermRead}, raw::{IntoRawMode, RawTerminal}};
+use std::{io::{stdin, stdout, Stdin, Stdout, Write}, time::{Instant, Duration}, usize};
+use crossbeam::select;
+use crossbeam::channel::{after, never};
+use termion::{clear, color, cursor, input::{Events, TermRead}, raw::{IntoRawMode, RawTerminal}};
+use std::thread;
 
-pub fn terminal_display() -> (TerminalDisplay, TerminalInput) {
+const MILLIS_BUDGET_PER_FRAME: u128 = 16;
+
+fn terminal_display() -> (TerminalDisplay, TerminalInput) {
     assert!(
         termion::is_tty(&0) && termion::is_tty(&1),
         "Not in a terminal"
     );
-    let mut stdout = MouseTerminal::from(
+    let mut stdout = 
         stdout()
             .into_raw_mode()
-            .expect("Unable to set terminal to raw mode... is this a tty?"),
-    );
+            .expect("Unable to set terminal to raw mode... is this a tty?");
+
     log::debug!("Terminal entered raw mode");
     let stdin = stdin();
-
-    write!(stdout, "{}{}", clear::All, cursor::Goto(1, 1))
-        .expect("Unable to initialize display: couldn't write to stdout");
     stdout.flush().unwrap();
 
     (
@@ -38,14 +37,112 @@ pub fn terminal_display() -> (TerminalDisplay, TerminalInput) {
 
 pub struct TerminalDisplay {
     top_line: usize,
-    stdout: MouseTerminal<RawTerminal<Stdout>>,
+    stdout: RawTerminal<Stdout>,
 }
 pub struct TerminalInput {
     events: Events<Stdin>,
 }
 
-impl Display for TerminalDisplay {
-    fn update(&mut self, state: &StateSnapshot) {
+pub fn spawn_interface(hub: pubsub::Hub) -> thread::JoinHandle<()> {
+    let (mut display, input) = terminal_display();
+
+    let mut display_hub = hub.clone();
+    let mut input_hub = hub.clone();
+
+    let input_thread = thread::Builder::new().name("input".into()).spawn(move || {
+        for e in input {
+            let send_result = input_hub.send(userinput::topic(), e);
+            if send_result.is_err() {
+                log::debug!("Shutting down listen thread");
+                // nobody is listening
+                break;
+            }
+        }
+        log::debug!("Input thread closing");
+    }).expect("Failed spawning input listener thread");
+    // daemonize - let it unwind when the process finishes
+    drop(input_thread);
+
+
+    thread::Builder::new().name("display".into()).spawn(move || {
+        let update_topic = state_update_topic();
+        let state_receiver = display_hub.get_receiver(update_topic);
+        let shutdown_receiver = display_hub.get_receiver(crate::editor::shutdown_event_topic());
+
+        log::debug!("Initializing display thread");
+
+        let mut last_state = None;
+        let start_time = Instant::now();
+        let mut deadline: Option<Instant> = Some(start_time.checked_add(Duration::from_millis(16)).unwrap());
+
+        log::debug!("Setting next render deadline: {:?}", deadline);
+
+        loop {
+            let now = Instant::now();
+            log::debug!("It's now: {:?}. Deadline is: {:?}", now, deadline);
+            if deadline.is_none() {
+                log::debug!("No current deadline");
+            }
+            
+            let time_until_deadline = deadline.and_then(|d| match d.checked_duration_since(now) {
+                Some(time_left) => {
+                    let ms = time_left.as_millis();
+                    log::debug!("Got {} until deadline", ms);
+                    Some(time_left)
+                }
+                None => {
+                    let ms_past = now.duration_since(d).as_millis();
+                    log::debug!("Past deadline by {}", ms_past);
+                    Some(Duration::from_millis(0))
+                }
+            });
+
+            select! {
+                recv(shutdown_receiver) -> _ => {
+                    log::debug!("Shutdown signal received");
+                    break;
+                }
+                recv(state_receiver) -> msg => {
+                    if let Err(e) = msg {
+                        log::debug!("Got error down pipe: {:?}", e);
+                        continue;
+                    }
+                    // the next frame deadline is when now_millis - start_millis % 16 == 0
+                    // or whatever the current deadline is
+                    last_state = Some(msg.unwrap());
+                    if deadline.is_some() {
+                        log::debug!("Deadline already set...");
+                        continue;
+                    }
+                    let now = Instant::now();
+                    let millis_in = now.checked_duration_since(start_time).unwrap_or(Duration::from_millis(0)).as_millis() % MILLIS_BUDGET_PER_FRAME;
+                    let mut time_until_next_deadline = Duration::from_millis((MILLIS_BUDGET_PER_FRAME - millis_in) as u64);
+                    if time_until_next_deadline < Duration::from_millis(5) {
+                        log::debug!("Dropping a frame as we're close to deadline");
+                        time_until_next_deadline = time_until_next_deadline + Duration::from_millis(MILLIS_BUDGET_PER_FRAME as u64);
+                    }
+                    let next_deadline: Instant = now.checked_add(time_until_next_deadline).expect("fuck");
+                    
+                    log::debug!("Set next deadline: {:?} ({}ms)", next_deadline, time_until_next_deadline.as_millis());
+                    deadline = Some(next_deadline);
+                },
+                recv(time_until_deadline.map(|d| after(d)).unwrap_or(never())) -> _timeout => {
+                    log::debug!("Hit deadline for render");
+
+                    if let Some(s) = last_state.take() {
+                        display.update(s);
+                    } else {
+                        log::debug!("Reached render deadline but no state waiting");
+                    }
+                    deadline = None;
+                }
+            }
+        }
+    }).expect("Failed spawning input listener thread")
+}
+
+impl TerminalDisplay {
+    fn update(&mut self, state: StateSnapshot) {
         log::debug!("Render start");
         let (w, h) = termion::terminal_size().expect("unable to check terminal dimensions");
 
@@ -68,7 +165,13 @@ impl Display for TerminalDisplay {
             match text_lines.next() {
                 Some(line) => {
                     let txt = line.content_str();
-                    let escaped = hlstate.and_then(|hl| hl.highlighted_line(&line)).unwrap_or(&txt);
+
+                    let escaped = 
+                        hlstate
+                            .as_ref()
+                            .and_then(|hls| hls.highlighted_line(&line))
+                            .unwrap_or(&txt);
+
                     write!(
                         self.stdout,
                         "{}{}{}{:2}|{}",
@@ -143,12 +246,6 @@ impl Display for TerminalDisplay {
 
         self.stdout.flush().unwrap();
         log::debug!("Render finish");
-    }
-}
-
-impl UserInputSource for TerminalInput {
-    fn events(&mut self) -> &mut dyn Iterator<Item = Event> {
-        self
     }
 }
 
