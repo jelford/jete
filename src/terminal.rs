@@ -251,7 +251,9 @@ impl TerminalDisplay {
 
 
             self.stdout.write_fmt(format_args!(
-                "{}{}",
+                "{}{}{}{}",
+                color::Fg(color::Reset),
+                color::Bg(color::Reset),
                 cursor::Goto(1, h - 1),
                 clear::CurrentLine
             )).unwrap();
