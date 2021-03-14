@@ -216,12 +216,16 @@ impl TerminalDisplay {
                 match text_lines.next() {
                     Some(line) => {
                         let txt = line.content_str();
-
+                        // let escaped = &txt;
                         let escaped = 
                             hlstate
                                 .as_ref()
                                 .and_then(|hls| hls.highlighted_line(&line))
                                 .unwrap_or(&txt);
+
+                        if line.line_number() % 10 == 0 {
+
+                        }
 
                         self.stdout.write_fmt(format_args!(
                             "{}{}{}{:2}|{}",

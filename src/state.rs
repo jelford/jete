@@ -165,8 +165,6 @@ impl<'a> State {
             },
         };
 
-        self.notify_change();
-
         EditorAction::None
     }
 
@@ -204,19 +202,20 @@ impl<'a> State {
                     cur_ln
                 };
 
-                self.notify_text_change();
-
                 self.status_text = format!(
                     "char: {} @ ({},{})",
                     if c != '\n' { c as u8 } else { 0 },
                     cur_ln,
                     cur_col
                 );
+
+                self.notify_text_change();
             }
             Mode::Command => {
                 if c == '\n' {
                 } else {
                     self.command_line.push(c);
+                    self.notify_change();
                 }
             }
 
@@ -364,6 +363,8 @@ impl<'a> State {
                 self.cursor_pos.colmun = line
                     .map(|l| self.cursor_pos.colmun.clamp(0, l.char_count()))
                     .unwrap_or(0);
+                
+                self.notify_change();
             }
             (0, col) => {
                 let line = self.text.line(self.cursor_pos.line_number);
@@ -381,6 +382,8 @@ impl<'a> State {
                             .saturating_sub(col.abs() as usize)
                             .clamp(0, line.char_count());
                     }
+
+                    self.notify_change();
                 }
             }
 

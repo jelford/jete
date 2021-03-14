@@ -270,7 +270,9 @@ impl Text {
         self.bump_rev();
         if self.line_count() > ln_number {
             self.line_changed(ln_number);
-            &mut self.lines[ln_number]
+            let ln = &mut self.lines[ln_number];
+            ln.rev = self.rev;
+            ln
         } else {
             let number_of_new_lines = ln_number - self.lines.len() + 1;
             self.lines.reserve(number_of_new_lines);
@@ -284,7 +286,9 @@ impl Text {
                 self.lines.push(l);
             }
 
-            &mut self.lines[ln_number]
+            let ln = &mut self.lines[ln_number];
+            ln.rev = self.rev;
+            ln
         }
     }
 
@@ -353,10 +357,14 @@ impl Text {
             })
         }
 
-        TextView {
+        let ret = TextView {
             rev: self.rev,
             lines: Arc::new(line_views),
-        }
+        };
+
+        log::debug!("produced view");
+
+        ret
     }
 
     pub fn iter_lines(&self) -> impl Iterator<Item=LineView> {
