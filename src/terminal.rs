@@ -8,7 +8,7 @@ use crossbeam::channel::{after, never};
 use termion::{clear, color, cursor, input::{Events, TermRead}, raw::{IntoRawMode, RawTerminal}};
 use std::thread;
 
-const MILLIS_BUDGET_PER_FRAME: u128 = 16;
+const MILLIS_BUDGET_PER_FRAME: Duration = Duration::from_millis(16);
 
 fn terminal_display() -> (TerminalDisplay, TerminalInput) {
     assert!(
@@ -73,7 +73,7 @@ pub fn spawn_interface(hub: pubsub::Hub) -> thread::JoinHandle<()> {
 
         let mut last_state = None;
         let start_time = Instant::now();
-        let mut deadline: Option<Instant> = Some(start_time.checked_add(Duration::from_millis(16)).unwrap());
+        let mut deadline: Option<Instant> = Some(start_time.checked_add(MILLIS_BUDGET_PER_FRAME).unwrap());
 
         log::debug!("Setting next render deadline: {:?}", deadline);
 
@@ -84,18 +84,9 @@ pub fn spawn_interface(hub: pubsub::Hub) -> thread::JoinHandle<()> {
                 log::debug!("No current deadline");
             }
             
-            let time_until_deadline = deadline.and_then(|d| match d.checked_duration_since(now) {
-                Some(time_left) => {
-                    let ms = time_left.as_millis();
-                    log::debug!("Got {} until deadline", ms);
-                    Some(time_left)
-                }
-                None => {
-                    let ms_past = now.duration_since(d).as_millis();
-                    log::debug!("Past deadline by {}", ms_past);
-                    Some(Duration::from_millis(0))
-                }
-            });
+            let time_until_deadline = 
+                deadline.map(
+                    |d| d.checked_duration_since(now).unwrap_or(Duration::from_millis(0)));
 
             select! {
                 recv(shutdown_receiver) -> _ => {
@@ -115,13 +106,16 @@ pub fn spawn_interface(hub: pubsub::Hub) -> thread::JoinHandle<()> {
                         continue;
                     }
                     let now = Instant::now();
-                    let millis_in = now.checked_duration_since(start_time).unwrap_or(Duration::from_millis(0)).as_millis() % MILLIS_BUDGET_PER_FRAME;
-                    let mut time_until_next_deadline = Duration::from_millis((MILLIS_BUDGET_PER_FRAME - millis_in) as u64);
-                    if time_until_next_deadline < Duration::from_millis(5) {
+                    let millis_in = now.checked_duration_since(start_time).unwrap_or(Duration::from_millis(0)).as_millis() % MILLIS_BUDGET_PER_FRAME.as_millis();
+                    let mut time_until_next_deadline = Duration::from_millis((MILLIS_BUDGET_PER_FRAME.as_millis() - millis_in) as u64);
+                    if time_until_next_deadline < Duration::from_millis(2) {
                         log::debug!("Dropping a frame as we're close to deadline");
-                        time_until_next_deadline = time_until_next_deadline + Duration::from_millis(MILLIS_BUDGET_PER_FRAME as u64);
+                        time_until_next_deadline = time_until_next_deadline + MILLIS_BUDGET_PER_FRAME;
                     }
-                    let next_deadline: Instant = now.checked_add(time_until_next_deadline).expect("fuck");
+                    let next_deadline: Instant = 
+                        now
+                            .checked_add(time_until_next_deadline)
+                            .expect("We have reached the end of time.");
                     
                     log::debug!("Set next deadline: {:?} ({}ms)", next_deadline, time_until_next_deadline.as_millis());
                     deadline = Some(next_deadline);
