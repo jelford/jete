@@ -1,10 +1,15 @@
-use std::{any::Any, cmp::{self}, collections::BTreeMap, fmt::Display, marker::PhantomData};
-use std::{usize};
+use std::usize;
+use std::{
+    any::Any,
+    cmp::{self},
+    collections::BTreeMap,
+    fmt::Display,
+    marker::PhantomData,
+};
 
 use std::sync::Arc;
 
 use lazy_static::lazy_static;
-
 
 lazy_static! {
     static ref EMPTY_STRING: Arc<String> = Arc::new(String::new());
@@ -70,7 +75,6 @@ pub struct Text {
     _nosend: NoSend,
 }
 
-
 pub struct LineContent {
     content: Vec<char>,
     content_string: Arc<String>,
@@ -98,7 +102,6 @@ where
 }
 
 impl Line {
-
     pub fn rev(&self) -> Rev {
         self.rev
     }
@@ -126,7 +129,6 @@ impl Line {
         self.on_content_change();
         result
     }
-
 
     pub fn extend_line(&mut self, mut other: Line) {
         assert!(!other.content.contains(&'\n'));
@@ -171,13 +173,11 @@ impl LineView {
     }
 }
 
-
 pub struct LineViewIterator {
     lines: Arc<Vec<LineView>>,
     idx: usize,
     end: usize,
 }
-
 
 impl<'a> Iterator for LineViewIterator {
     type Item = LineView;
@@ -205,15 +205,14 @@ impl TextView {
         self.iter_line_range(0, self.lines.len())
     }
 
-    pub fn iter_line_range(&self, start: usize, end: usize) -> impl Iterator<Item=LineView> {
+    pub fn iter_line_range(&self, start: usize, end: usize) -> impl Iterator<Item = LineView> {
         LineViewIterator {
             lines: self.lines.clone(),
             idx: start,
-            end: self.lines.len().min(end), 
+            end: self.lines.len().min(end),
         }
     }
 }
-
 
 impl Text {
     pub fn new() -> Self {
@@ -267,7 +266,7 @@ impl Text {
         let rev = self.bump_rev();
         self.line_changed(ln_number);
         self.lines.get_mut(ln_number).map(move |mut ln| {
-            ln.rev = rev; 
+            ln.rev = rev;
             ln
         })
     }
@@ -312,12 +311,12 @@ impl Text {
         S: Into<LineContent>,
     {
         let rev = self.bump_rev();
-        let lc : LineContent = s.into();
+        let lc: LineContent = s.into();
         let line = Line {
             id: self.bump_line_id(),
             rev,
             content: lc.content,
-            content_string: lc.content_string
+            content_string: lc.content_string,
         };
         self.lines.insert(ln_number, line);
         self.line_changed(ln_number);
@@ -327,13 +326,16 @@ impl Text {
         let rev = self.bump_rev();
         let line_id = self.bump_line_id();
         let content_str = Arc::new(chars.iter().collect());
-        
-        self.lines.insert(ln_number, Line {
-            id: line_id,
-            rev,
-            content: chars,
-            content_string: content_str,
-        });
+
+        self.lines.insert(
+            ln_number,
+            Line {
+                id: line_id,
+                rev,
+                content: chars,
+                content_string: content_str,
+            },
+        );
 
         self.line_changed(ln_number);
     }
@@ -351,7 +353,6 @@ impl Text {
         let mut line_views = Vec::with_capacity(self.lines.len());
         let mut max_rev_so_far = Rev::default();
         for (ln_number, ln) in self.lines.iter().enumerate() {
-
             max_rev_so_far = cmp::max(ln.rev, max_rev_so_far);
 
             line_views.push(LineView {
@@ -373,11 +374,11 @@ impl Text {
         ret
     }
 
-    pub fn iter_lines(&self) -> impl Iterator<Item=LineView> {
+    pub fn iter_lines(&self) -> impl Iterator<Item = LineView> {
         self.view().iter_lines()
     }
 
-    pub fn iter_line_range(&self, start: usize, end: usize) -> impl Iterator<Item=LineView> {
+    pub fn iter_line_range(&self, start: usize, end: usize) -> impl Iterator<Item = LineView> {
         self.view().iter_line_range(start, end)
     }
 }
@@ -392,16 +393,13 @@ mod test {
         t.insert_line(0, "hello");
         t.insert_line(1, "world");
 
-
         let l = t.line(0).expect("inserted line not present");
         assert_eq!(*l.content_string(), "hello");
-
 
         let l = t.line(1).expect("inserted line not present");
         assert_eq!(*l.content_string(), "world");
     }
 
-    
     #[test]
     fn iterate_over_contained_range() {
         let mut t = Text::new();
@@ -413,24 +411,50 @@ mod test {
 
         let mut it = t.iter_line_range(0, 5);
 
-        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("hello".to_string()));
-        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("world".to_string()));
-        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("how".to_string()));
-        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("are".to_string()));
-        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("you".to_string()));
-        assert!(it.next().is_none());
-        
-        let mut it = t.iter_line_range(0, 2);
-        
-        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("hello".to_string()));
-        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("world".to_string()));
+        assert_eq!(
+            it.next().map(|lv| lv.content_str().to_string()),
+            Some("hello".to_string())
+        );
+        assert_eq!(
+            it.next().map(|lv| lv.content_str().to_string()),
+            Some("world".to_string())
+        );
+        assert_eq!(
+            it.next().map(|lv| lv.content_str().to_string()),
+            Some("how".to_string())
+        );
+        assert_eq!(
+            it.next().map(|lv| lv.content_str().to_string()),
+            Some("are".to_string())
+        );
+        assert_eq!(
+            it.next().map(|lv| lv.content_str().to_string()),
+            Some("you".to_string())
+        );
         assert!(it.next().is_none());
 
+        let mut it = t.iter_line_range(0, 2);
+
+        assert_eq!(
+            it.next().map(|lv| lv.content_str().to_string()),
+            Some("hello".to_string())
+        );
+        assert_eq!(
+            it.next().map(|lv| lv.content_str().to_string()),
+            Some("world".to_string())
+        );
+        assert!(it.next().is_none());
 
         let mut it = t.iter_line_range(3, 7);
-        
-        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("are".to_string()));
-        assert_eq!(it.next().map(|lv| lv.content_str().to_string()), Some("you".to_string()));
+
+        assert_eq!(
+            it.next().map(|lv| lv.content_str().to_string()),
+            Some("are".to_string())
+        );
+        assert_eq!(
+            it.next().map(|lv| lv.content_str().to_string()),
+            Some("you".to_string())
+        );
         assert!(it.next().is_none());
     }
 
@@ -447,7 +471,6 @@ mod test {
         assert_eq!(l.char_count(), 1);
 
         assert_eq!(t.line_count(), 25);
-        
     }
 
     #[test]
@@ -474,13 +497,12 @@ mod test {
         assert_eq!(line_iter.next().unwrap().rev(), Rev::from(5));
         assert_eq!(line_iter.next().unwrap().rev(), Rev::from(4));
         assert!(line_iter.next().is_none());
-        
+
         let mut line_iter = t.iter_lines();
         assert_eq!(line_iter.next().unwrap().max_rev_before(), Rev::from(1));
         assert_eq!(line_iter.next().unwrap().max_rev_before(), Rev::from(2));
         assert_eq!(line_iter.next().unwrap().max_rev_before(), Rev::from(5));
         assert_eq!(line_iter.next().unwrap().max_rev_before(), Rev::from(5));
         assert!(line_iter.next().is_none());
-        
     }
 }

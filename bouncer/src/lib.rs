@@ -1,7 +1,6 @@
-use std::{time::{Instant, Duration}};
+use std::time::{Duration, Instant};
 
 const ZERO_DURATION: Duration = Duration::from_millis(0);
-
 
 pub struct Bouncer {
     deadline: Option<Instant>,
@@ -12,7 +11,7 @@ pub struct Bouncer {
 
 pub struct BouncerBuilder {
     time_between_deadlines: Duration,
-    grace_period: Option<Duration>
+    grace_period: Option<Duration>,
 }
 
 impl BouncerBuilder {
@@ -34,14 +33,13 @@ impl BouncerBuilder {
             deadline: None,
         }
     }
-
 }
 
 impl Bouncer {
     pub fn builder() -> BouncerBuilder {
         BouncerBuilder {
             time_between_deadlines: ZERO_DURATION,
-            grace_period: None
+            grace_period: None,
         }
     }
 
@@ -56,24 +54,24 @@ impl Bouncer {
         }
 
         let now = Instant::now();
-        let millis_in = 
-            now
-                .checked_duration_since(self.start_time)
-                .map(|d| d.as_millis() % self.millis_budget)
-                .unwrap_or(0);
+        let millis_in = now
+            .checked_duration_since(self.start_time)
+            .map(|d| d.as_millis() % self.millis_budget)
+            .unwrap_or(0);
 
         let mut time_until_next_deadline = self.millis_budget - millis_in;
         if let Some(grace_period) = self.hot_deadline_proximity {
-            if  time_until_next_deadline < grace_period {
+            if time_until_next_deadline < grace_period {
                 time_until_next_deadline = time_until_next_deadline + self.millis_budget;
             }
         }
 
-        let next_deadline: Instant = 
-            now
-                .checked_add(Duration::from_millis(time_until_next_deadline.min(u64::max_value() as u128) as u64))
-                .expect("We have reached the end of time.");
-        
+        let next_deadline: Instant = now
+            .checked_add(Duration::from_millis(
+                time_until_next_deadline.min(u64::max_value() as u128) as u64,
+            ))
+            .expect("We have reached the end of time.");
+
         self.deadline = Some(next_deadline);
     }
 
@@ -112,14 +110,18 @@ mod tests {
 
     #[test]
     fn bouncer_with_long_deadline_is_now_expired_immediately() {
-        let mut d = Bouncer::builder().time_between_deadlines(Duration::from_secs(10)).build();
+        let mut d = Bouncer::builder()
+            .time_between_deadlines(Duration::from_secs(10))
+            .build();
         d.mark();
         assert!(!d.expired());
     }
 
     #[test]
     fn bouncer_gives_reasonable_time_to_expiry_after_marking() {
-        let mut d = Bouncer::builder().time_between_deadlines(Duration::from_secs(10)).build();
+        let mut d = Bouncer::builder()
+            .time_between_deadlines(Duration::from_secs(10))
+            .build();
         d.mark();
         let time_to_expiry = d.duration_until_deadline().unwrap();
         assert!(time_to_expiry > Duration::from_millis(9_500));
@@ -139,12 +141,11 @@ mod tests {
 
         let start_of_poll = Instant::now();
         let mut saw_deadline_jump_ahead = false;
-        
+
         while match Instant::now().checked_duration_since(start_of_poll) {
             None => true,
-            Some(d) => d < Duration::from_secs(1)
+            Some(d) => d < Duration::from_secs(1),
         } {
-
             std::thread::sleep(Duration::from_micros(1));
 
             hot_deadline_skipper.mark();
@@ -155,14 +156,17 @@ mod tests {
                 break;
             }
 
-            assert!(bouncer_sticking_to_deadlines.duration_until_deadline().unwrap() <= time_between_deadlines);
+            assert!(
+                bouncer_sticking_to_deadlines
+                    .duration_until_deadline()
+                    .unwrap()
+                    <= time_between_deadlines
+            );
 
             hot_deadline_skipper.clear();
             bouncer_sticking_to_deadlines.clear();
-            
         }
 
         assert!(saw_deadline_jump_ahead);
     }
-
 }

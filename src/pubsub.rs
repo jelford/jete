@@ -1,7 +1,11 @@
-use std::{any::{TypeId, Any}, collections::HashMap, marker::PhantomData};
-use std::sync::{Arc, Mutex};
 use crossbeam::channel::{self, Receiver, Sender};
 use std::fmt;
+use std::sync::{Arc, Mutex};
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+    marker::PhantomData,
+};
 
 #[derive(Clone)]
 #[non_exhaustive]
@@ -26,7 +30,7 @@ pub fn typed_topic<A: 'static>(name: &'static str) -> TopicId<A> {
     TopicId {
         id: TopicIdInternal::Type {
             name,
-            tipe: TypeId::of::<A>()
+            tipe: TypeId::of::<A>(),
         },
         _type: PhantomData,
     }
@@ -35,7 +39,7 @@ pub fn typed_topic<A: 'static>(name: &'static str) -> TopicId<A> {
 impl fmt::Display for TopicIdInternal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TopicIdInternal::Type { name, .. } => name.fmt(f)
+            TopicIdInternal::Type { name, .. } => name.fmt(f),
         }
     }
 }
@@ -44,8 +48,8 @@ impl fmt::Display for TopicIdInternal {
 enum TopicIdInternal {
     Type {
         name: &'static str,
-        tipe: std::any::TypeId
-    }
+        tipe: std::any::TypeId,
+    },
 }
 
 struct Topic<T> {
@@ -54,22 +58,25 @@ struct Topic<T> {
 
 #[derive(Clone)]
 pub struct Hub {
-    internal: Arc<Mutex<HubInternal>>
+    internal: Arc<Mutex<HubInternal>>,
 }
 
-
 struct HubInternal {
-    topics: HashMap<TopicIdInternal, Box<dyn Any+Send>>,
+    topics: HashMap<TopicIdInternal, Box<dyn Any + Send>>,
 }
 
 impl Hub {
     pub fn new() -> Self {
         Hub {
-            internal: Arc::new(Mutex::new(HubInternal::new()))
+            internal: Arc::new(Mutex::new(HubInternal::new())),
         }
     }
 
-    pub fn send<T: 'static+ Clone + Send>(&mut self, topic: TopicId<T>, value: T) -> Result<(), ()> {
+    pub fn send<T: 'static + Clone + Send>(
+        &mut self,
+        topic: TopicId<T>,
+        value: T,
+    ) -> Result<(), ()> {
         let mut internal = self.internal.lock().unwrap();
         internal.send(topic, value)
     }
@@ -78,12 +85,13 @@ impl Hub {
         let mut internal = self.internal.lock().unwrap();
         internal.get_receiver(topic)
     }
-
 }
 
 impl HubInternal {
     fn new() -> Self {
-        HubInternal {topics: HashMap::new() }
+        HubInternal {
+            topics: HashMap::new(),
+        }
     }
 
     fn send<T: 'static + Clone + Send>(&mut self, topic: TopicId<T>, value: T) -> Result<(), ()> {
@@ -112,7 +120,6 @@ impl HubInternal {
         }
     }
 
-
     fn get_receiver<T: 'static + Send>(&mut self, topic: TopicId<T>) -> Receiver<T> {
         log::debug!("Giving out receiver for {}", topic);
         let t = self.get_or_create_topic(&topic);
@@ -122,16 +129,19 @@ impl HubInternal {
     }
 
     fn get_or_create_topic<T: 'static + Send>(&mut self, topic: &TopicId<T>) -> &mut Topic<T> {
-        self.topics.entry(topic.id).or_insert_with(|| {
-            log::debug!("Setting up channel for {}", topic);
-            let t : Topic<T> = Topic {
-                senders: Vec::new(),
-            };
-            Box::new(t)
-        }).downcast_mut().expect("Internal state inconsistent")
+        self.topics
+            .entry(topic.id)
+            .or_insert_with(|| {
+                log::debug!("Setting up channel for {}", topic);
+                let t: Topic<T> = Topic {
+                    senders: Vec::new(),
+                };
+                Box::new(t)
+            })
+            .downcast_mut()
+            .expect("Internal state inconsistent")
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -152,7 +162,6 @@ mod tests {
 
     #[test]
     fn can_receive_from_cloned_hub() {
-
         let mut h1 = Hub::new();
         let topic = typed_topic::<u8>("test");
         let receiver = h1.get_receiver(topic.clone());
@@ -172,16 +181,22 @@ mod tests {
 
         let t = std::thread::spawn(move || {
             let r = h2.get_receiver(typed_topic::<u8>("test"));
-            sync_send.send(()).expect("Failed trying to signal to main thread that we're ready for assertions");
+            sync_send
+                .send(())
+                .expect("Failed trying to signal to main thread that we're ready for assertions");
             let result = r.recv_timeout(Duration::from_millis(30));
             result.unwrap();
         });
 
-        sync_receive.recv_timeout(Duration::from_millis(50)).expect("Never got the go-ahead from receiver");
-        h1.send(typed_topic::<u8>("test"), 12).expect("Sending failed - no receiver?");
-        
+        sync_receive
+            .recv_timeout(Duration::from_millis(50))
+            .expect("Never got the go-ahead from receiver");
+        h1.send(typed_topic::<u8>("test"), 12)
+            .expect("Sending failed - no receiver?");
+
         t.join().unwrap();
-        
-        h1.send(typed_topic::<u8>("test"), 13).expect_err("Should fail now as no subscribers");
+
+        h1.send(typed_topic::<u8>("test"), 13)
+            .expect_err("Should fail now as no subscribers");
     }
 }

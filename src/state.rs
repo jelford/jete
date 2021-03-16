@@ -1,10 +1,12 @@
-use crate::{pubsub::{self, Hub}, text::{Text, TextView}};
 use crate::userinput::{Event, Key};
-use std::{ffi::OsStr};
+use crate::{
+    pubsub::{self, Hub},
+    text::{Text, TextView},
+};
+use std::ffi::OsStr;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::{fs::File, usize};
-
 
 pub fn text_update_topic() -> pubsub::TopicId<TextView> {
     pubsub::typed_topic("body-text")
@@ -169,13 +171,16 @@ impl<'a> State {
     }
 
     fn notify_change(&mut self) {
-        if let Err(_) = self.pubsub.send(state_update_topic(), StateSnapshot{
-            cursor_pos: self.cursor_pos.clone(),
-            text: self.text.view(),
-            status_text: self.status_text.clone(),
-            mode: self.mode.clone(),
-            command_line: self.command_line.clone(),
-        }) {
+        if let Err(_) = self.pubsub.send(
+            state_update_topic(),
+            StateSnapshot {
+                cursor_pos: self.cursor_pos.clone(),
+                text: self.text.view(),
+                status_text: self.status_text.clone(),
+                mode: self.mode.clone(),
+                command_line: self.command_line.clone(),
+            },
+        ) {
             log::debug!("State changed but nobody's listening");
         }
     }
@@ -285,7 +290,9 @@ impl<'a> State {
                     let cur_row = self.cursor_pos.line_number;
 
                     if cur_row == 0 {
-                        if self.text.line_count() == 1 && self.text.line(0).expect("0th line missing").char_count() == 0 {
+                        if self.text.line_count() == 1
+                            && self.text.line(0).expect("0th line missing").char_count() == 0
+                        {
                             self.text.remove_line(0);
                         }
                         return;
@@ -363,7 +370,7 @@ impl<'a> State {
                 self.cursor_pos.colmun = line
                     .map(|l| self.cursor_pos.colmun.clamp(0, l.char_count()))
                     .unwrap_or(0);
-                
+
                 self.notify_change();
             }
             (0, col) => {
@@ -424,7 +431,7 @@ pub fn empty<'a>(pubsub: Hub) -> State {
         mode: Mode::Normal,
         command_line: String::new(),
         file: None,
-        pubsub
+        pubsub,
     }
 }
 
