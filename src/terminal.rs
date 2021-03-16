@@ -2,7 +2,7 @@ use crate::{highlight::HighlightRev, pubsub, text::{LineId, Rev}, userinput::{se
 use crate::state::{Mode, StateSnapshot, state_update_topic};
 use crate::userinput::{Event};
 use crate::highlight::HighlightState;
-use std::{io::{stdin, stdout, Stdin, Stdout, Write}, time::{Instant, Duration}, usize};
+use std::{io::{stdin, stdout, Stdin, Stdout, Write}, time::{Duration}, usize};
 use crossbeam::select;
 use crossbeam::channel::{after, never};
 use termion::{clear, color::{self, Bg}, cursor, input::{Events, TermRead}, raw::{IntoRawMode, RawTerminal}, screen};
@@ -25,7 +25,7 @@ fn terminal_display() -> (TerminalDisplay, TerminalInput) {
     let stdin = stdin();
     stdout.flush().unwrap();
 
-    let mut last_displayed = Vec::with_capacity(termion::terminal_size().unwrap().1 as usize +1);
+    let last_displayed = Vec::with_capacity(termion::terminal_size().unwrap().1 as usize +1);
 
     (
         TerminalDisplay {
