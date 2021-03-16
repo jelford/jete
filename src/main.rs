@@ -1,7 +1,8 @@
 use jete::editor;
 use std::{env};
 use log::LevelFilter;
-use log4rs::append::file::FileAppender;
+use log4rs::append::{rolling_file::{RollingFileAppender, policy::compound::{roll::delete::DeleteRoller, trigger::size::SizeTrigger}}};
+use log4rs::append::rolling_file::policy::compound::CompoundPolicy;
 use log4rs::encode::pattern::PatternEncoder;
 use log4rs::config::{Appender, Config, Root};
 
@@ -13,16 +14,19 @@ fn main() {
 
     let file = args.next();
 
-    // let (display, inputs) = terminal_display();
-
     editor::run(file);    
 }
 
 
 fn configure_logging() {
-    let log_file = FileAppender::builder()
+    let roll_policy = Box::new(CompoundPolicy::new(
+        Box::new(SizeTrigger::new(5_000_000)),
+        Box::new(DeleteRoller::new())
+    ));
+    
+    let log_file = RollingFileAppender::builder()
         .encoder(Box::new(PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S%.3f)} {l} {t} [{T}:{I}] - {m}{n}")))
-        .build("jete.log")
+        .build("jete.log", roll_policy)
         .unwrap();
 
     let config = Config::builder()

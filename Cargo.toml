@@ -18,6 +18,6 @@ termion = "1.5"
 crossbeam = "0.8"
 syntect = { version = "4.5", default-features = false, features = ["default-fancy"] }
 log = "0.4"
-log4rs = { version = "1", default-features = false, features = ["file_appender", "pattern_encoder"] }
+log4rs = { version = "1", default-features = false, features = ["file_appender", "pattern_encoder", "rolling_file_appender", "size_trigger", "compound_policy", "delete_roller"] }
 lazy_static = "1.4"
 bouncer = { path = "./bouncer" }
