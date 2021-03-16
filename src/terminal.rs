@@ -7,6 +7,7 @@ use crossbeam::select;
 use crossbeam::channel::{after, never};
 use termion::{clear, color::{self, Bg}, cursor, input::{Events, TermRead}, raw::{IntoRawMode, RawTerminal}, screen};
 use std::thread;
+use bouncer::Bouncer;
 
 const FRAME_BUDGET: Duration = Duration::from_millis(16);
 
@@ -76,13 +77,20 @@ pub fn spawn_interface(hub: pubsub::Hub) -> thread::JoinHandle<()> {
             highlighter_state: None,
         };
 
-        let mut render = RenderDeadline::new(FRAME_BUDGET);
+        let mut render_start_deadline = 
+            Bouncer::builder()
+                .time_between_deadlines(FRAME_BUDGET)
+                .skip_hot_deadline(Duration::from_millis(2))
+                .build();
         
         loop {
-            let now = Instant::now();
-            log::debug!("It's now: {:?}. Deadline is: {:?}", now, render.deadline());
-            
-            let time_until_deadline = render.duration_until_deadline();
+            if render_start_deadline.expired() {
+                log::debug!("Render start deadline hit - updating display");
+                display.update(&last_state);
+                render_start_deadline.clear();
+            }
+
+            let time_until_deadline = render_start_deadline.duration_until_deadline();
 
             select! {
                 recv(shutdown_receiver) -> _ => {
@@ -97,7 +105,7 @@ pub fn spawn_interface(hub: pubsub::Hub) -> thread::JoinHandle<()> {
                     // the next frame deadline is when now_millis - start_millis % 16 == 0
                     // or whatever the current deadline is
                     last_state.editor_state = Some(msg.unwrap());
-                    render.trigger();
+                    render_start_deadline.mark();
                 },
                 recv(highlight_receiver) -> msg => {
                     match msg {
@@ -106,81 +114,14 @@ pub fn spawn_interface(hub: pubsub::Hub) -> thread::JoinHandle<()> {
                         },
                         Ok(msg) => {
                             last_state.highlighter_state = Some(msg);
-                            render.trigger();
+                            render_start_deadline.mark();
                         },
                     };
                 },
-                recv(time_until_deadline.map(|d| after(d)).unwrap_or(never())) -> _timeout => {
-                    log::debug!("Hit deadline for render");
-                    
-                    display.update(&last_state);
-                    render.clear_deadline();
-                }
+                recv(time_until_deadline.map(|d| after(d)).unwrap_or(never())) -> _timeout => {}
             }
         }
     }).expect("Failed spawning input listener thread")
-}
-
-struct RenderDeadline {
-    deadline: Option<Instant>,
-    millis_budget: u128,
-    start_time: Instant,
-}
-
-impl RenderDeadline {
-    fn new(time_between_deadlines: Duration) -> Self {
-        RenderDeadline {
-            deadline: None,
-            millis_budget: time_between_deadlines.as_millis(),
-            start_time: Instant::now(),
-        }
-    }
-
-    fn trigger(&mut self) {
-        if self.deadline.is_some() {
-            log::debug!("Deadline already set");
-            return;
-        }
-
-        let now = Instant::now();
-        let millis_in = 
-            now
-                .checked_duration_since(self.start_time)
-                .unwrap_or(Duration::from_millis(0)).as_millis() % self.millis_budget;
-
-        let mut time_until_next_deadline = Duration::from_millis((self.millis_budget - millis_in) as u64);
-        if time_until_next_deadline < Duration::from_millis(2) {
-            log::debug!("Dropping a frame as we're close to deadline");
-            time_until_next_deadline = time_until_next_deadline + FRAME_BUDGET;
-        }
-
-        let next_deadline: Instant = 
-            now
-                .checked_add(time_until_next_deadline)
-                .expect("We have reached the end of time.");
-        
-        log::debug!("Set next deadline: {:?} ({}ms)", next_deadline, time_until_next_deadline.as_millis());
-        self.deadline = Some(next_deadline);
-    }
-
-    fn deadline(&self) -> &Option<Instant> {
-        &self.deadline
-    }
-
-    fn duration_until_deadline(&self) -> Option<Duration> {
-        let now = Instant::now();
-        self.deadline.map(|deadline| {
-            deadline
-                .checked_duration_since(now)
-                .unwrap_or(Duration::from_millis(0))
-        })
-    }
-
-    fn clear_deadline(&mut self) {
-        self.deadline = None;
-    }
-
-
 }
 
 struct StateForDisplay {
