@@ -1,11 +1,8 @@
-use std::{collections::{BTreeMap, HashMap, HashSet, hash_map::DefaultHasher}, fmt::{Display, Formatter}, hash::{self, Hash, Hasher}, thread, time::Duration};
+use std::{collections::{HashMap, HashSet, hash_map::DefaultHasher}, fmt::{Display, Formatter}, hash::{self, Hash, Hasher}, sync::{Condvar, Mutex, Arc}, thread, time::Duration};
 
-
-use std::sync::Arc;
-use crossbeam::channel;
 use syntect::{highlighting::{ThemeSet}, parsing::{SyntaxSet}};
 
-use crate::{pubsub::{self}, text::LineView};
+use crate::{pubsub::{self}, text::{LineView, TextView}};
 use crate::state;
 use crate::text::{Rev, LineId};
 
@@ -86,13 +83,26 @@ impl HighlightedLine {
 
 pub fn spawn_highlighter(mut hub: pubsub::Hub) {
 
-    // coordinate our interaction with the pubsub system; need to be ready and listening
-    // for messages before they are sent.
-    let (ready_send, ready_receive) = channel::bounded::<()>(0);
+    let text_receiver = hub.get_receiver(state::text_update_topic());
+    let latest_state_sender: Arc<(Mutex<Option<TextView>>, Condvar)> = Arc::new((Mutex::new(None), Condvar::new()));
+    let latest_state_consumer = latest_state_sender.clone();
+
+    thread::Builder::new().name("highlight-coalescer".into()).spawn(move || {
+        let (lock, cond) = &*latest_state_sender;
+
+        for state in text_receiver {
+            let mut state_holder = lock.lock().expect("publishing latest state");
+            if state_holder.is_some() {
+                log::debug!("skipping a state update...");
+            }
+            *state_holder = Some(state);
+            cond.notify_one();
+        }
+
+    }).expect("spawning highlight thread");
 
     thread::Builder::new().name("highlighter".into()).spawn(move || {
-        let r = hub.get_receiver(state::text_update_topic());
-        ready_send.send(()).unwrap();
+       
 
 
         let syntax_set = SyntaxSet::load_defaults_nonewlines();
@@ -105,8 +115,18 @@ pub fn spawn_highlighter(mut hub: pubsub::Hub) {
         let mut prev_hl_state = HighlightState {
             highlighted_lines: HashMap::new()
         };
-        
-        while let Ok(text) = r.recv() {
+
+        loop {
+            let (lock, cond) = &*latest_state_consumer;
+            let text = {
+                let mut new_state = lock.lock().expect("getting latest state");
+                while new_state.is_none() {
+                    new_state = cond.wait(new_state).expect("getting latest state");
+                }
+                new_state.take().unwrap()
+            };
+
+
             log::debug!("Beginning highlight pass");
             
             let mut new_state = prev_hl_state.clone();
@@ -142,7 +162,6 @@ pub fn spawn_highlighter(mut hub: pubsub::Hub) {
             prev_hl_state = new_state;
             prev_hl_state.highlighted_lines.retain(|lid, _| seen_lines.contains(lid));
         }
+        
     }).expect("Initializing highlighter");
-
-    ready_receive.recv_timeout(Duration::from_millis(10)).expect("Unable to initialize highlighter");
 }
