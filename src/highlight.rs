@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet, hash_map::DefaultHasher}, fmt::{Display, Formatter}, hash::{self, Hash, Hasher}, sync::{Condvar, Mutex, Arc}, thread, time::Duration};
+use std::{collections::{HashMap, HashSet, hash_map::DefaultHasher}, fmt::{Display, Formatter}, hash::{Hash, Hasher}, sync::{Condvar, Mutex, Arc}, thread};
 
 use syntect::{highlighting::{ThemeSet}, parsing::{SyntaxSet}};
 

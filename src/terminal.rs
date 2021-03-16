@@ -2,10 +2,10 @@ use crate::{highlight::HighlightRev, pubsub, text::{LineId, Rev}, userinput::{se
 use crate::state::{Mode, StateSnapshot, state_update_topic};
 use crate::userinput::{Event};
 use crate::highlight::HighlightState;
-use std::{io::{stdin, stdout, Stdin, Stdout, Write}, time::{Duration}, usize};
+use std::{io::{stdin, stdout, Stdin, Stdout, Write}, time::Duration};
 use crossbeam::select;
 use crossbeam::channel::{after, never};
-use termion::{clear, color::{self, Bg}, cursor, input::{Events, TermRead}, raw::{IntoRawMode, RawTerminal}, screen};
+use termion::{clear, color, cursor, input::{Events, TermRead}, raw::{IntoRawMode, RawTerminal}};
 use std::thread;
 use bouncer::Bouncer;
 
