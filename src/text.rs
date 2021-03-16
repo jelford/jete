@@ -1,4 +1,4 @@
-use std::{any::Any, cmp::{self}, collections::BTreeMap, marker::PhantomData};
+use std::{any::Any, cmp::{self}, collections::BTreeMap, fmt::Display, marker::PhantomData};
 use std::{usize};
 
 use std::sync::Arc;
@@ -13,6 +13,12 @@ lazy_static! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Rev {
     rev: u64,
+}
+
+impl Display for Rev {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.rev.fmt(fmt)
+    }
 }
 
 impl From<u64> for Rev {
@@ -34,7 +40,7 @@ impl Rev {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LineId {
     id: u64,
 }

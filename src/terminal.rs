@@ -1,11 +1,11 @@
-use crate::{pubsub, userinput::{self}};
+use crate::{highlight::HighlightRev, pubsub, text::{LineId, Rev}, userinput::{self}};
 use crate::state::{Mode, StateSnapshot, state_update_topic};
 use crate::userinput::{Event};
 use crate::highlight::HighlightState;
 use std::{io::{stdin, stdout, Stdin, Stdout, Write}, time::{Instant, Duration}, usize};
 use crossbeam::select;
 use crossbeam::channel::{after, never};
-use termion::{clear, color, cursor, input::{Events, TermRead}, raw::{IntoRawMode, RawTerminal}};
+use termion::{clear, color::{self, Bg}, cursor, input::{Events, TermRead}, raw::{IntoRawMode, RawTerminal}, screen};
 use std::thread;
 
 const FRAME_BUDGET: Duration = Duration::from_millis(16);
@@ -24,10 +24,13 @@ fn terminal_display() -> (TerminalDisplay, TerminalInput) {
     let stdin = stdin();
     stdout.flush().unwrap();
 
+    let mut last_displayed = Vec::with_capacity(termion::terminal_size().unwrap().1 as usize +1);
+
     (
         TerminalDisplay {
             top_line: 0,
             stdout,
+            last_displayed,
         },
         TerminalInput {
             events: stdin.events(),
@@ -35,10 +38,6 @@ fn terminal_display() -> (TerminalDisplay, TerminalInput) {
     )
 }
 
-pub struct TerminalDisplay {
-    top_line: usize,
-    stdout: RawTerminal<Stdout>,
-}
 pub struct TerminalInput {
     events: Events<Stdin>,
 }
@@ -189,6 +188,52 @@ struct StateForDisplay {
     highlighter_state: Option<HighlightState>,
 }
 
+#[derive(Clone)]
+enum LineDisplayRevision {
+    New,
+    Previous {
+        line_id: LineId,
+        line_rev: Option<Rev>,
+        hl_rev: Option<HighlightRev>,
+        screen_dims: (u16, u16),
+    }
+}
+
+impl LineDisplayRevision {
+    fn from(line_id: LineId, line_rev: Rev, hl_rev: Option<HighlightRev>, screen_dims: (u16, u16)) -> Self {
+        LineDisplayRevision::Previous {
+            line_id, line_rev: Some(line_rev), hl_rev, screen_dims
+        }
+    }
+
+    fn is_new(&self, previous: &LineDisplayRevision) -> bool {
+        match (self, previous) {
+            (Self::New, _) => true,
+            (_, Self::New) => true,
+            (Self::Previous { line_id: my_line_id, line_rev: my_line_rev, hl_rev: my_hl_rev, screen_dims: my_screen_dims },
+            Self::Previous { line_id, line_rev, hl_rev, screen_dims }) => {
+                my_line_id != line_id 
+                || line_rev.is_none() || my_line_rev != line_rev 
+                || hl_rev.is_none() || my_hl_rev != hl_rev 
+                || my_screen_dims != screen_dims
+                
+            }
+        }
+    }
+}
+
+impl Default for LineDisplayRevision {
+    fn default() -> Self {
+        LineDisplayRevision::New
+    }
+}
+
+pub struct TerminalDisplay {
+    top_line: usize,
+    stdout: RawTerminal<Stdout>,
+    last_displayed: Vec<LineDisplayRevision>
+}
+
 impl TerminalDisplay {
     fn update(&mut self, state: &StateForDisplay) {
         log::debug!("Render start");
@@ -196,6 +241,8 @@ impl TerminalDisplay {
 
         let lines_at_bottom = 2u16;
         let text_view_height = h - lines_at_bottom;
+
+        self.last_displayed.resize(h as usize + 1, LineDisplayRevision::default());
 
         if let Some(editor_state) = &state.editor_state {
 
@@ -211,30 +258,51 @@ impl TerminalDisplay {
             let mut text_lines = text.iter_line_range(self.top_line, self.top_line.saturating_add(text_view_height as usize));
             let mut output_line = 1;
 
-        
             while output_line <= text_view_height {
                 match text_lines.next() {
                     Some(line) => {
+
+
                         let txt = line.content_str();
-                        // let escaped = &txt;
-                        let escaped = 
-                            hlstate
-                                .as_ref()
-                                .and_then(|hls| hls.highlighted_line(&line))
-                                .unwrap_or(&txt);
 
-                        if line.line_number() % 10 == 0 {
+                        let (escaped, hl_rev) = match hlstate.as_ref() {
+                            Some(hls) => {
+                                match hls.highlighted_line(&line) {
+                                    Some(hll) => (hll.highlighted_text(), Some(hll.rev())),
+                                    None => (txt, None),
+                                }
+                            },
+                            None => {
+                                (txt, None)
+                            }
+                        };
 
+                        let now_key = LineDisplayRevision::from(line.id(), line.rev(), hl_rev, (w, h));
+                        let last_time = &self.last_displayed[output_line as usize];
+                        let should_render = now_key.is_new(last_time);
+
+                        if should_render {
+                            self.stdout.write_fmt(format_args!(
+                                "{}{}{}{:3}@{:2}/{:2}|{}",
+                                cursor::Goto(1, output_line),
+                                color::Fg(color::Reset),
+                                clear::CurrentLine,
+                                line.line_number(),
+                                line.rev(),
+                                hl_rev.unwrap_or(HighlightRev::default()),
+                                &escaped
+                            )).expect("Unable to write to main text area");
+
+                            self.last_displayed[output_line as usize] = now_key;
+                        } else {
+                            self.stdout.write_fmt(format_args!(
+                                "{}{}{}{}",
+                                cursor::Goto(4, output_line),
+                                color::Bg(color::Blue),
+                                "@",
+                                color::Bg(color::Reset)
+                            )).expect("Unable to write to main text area");
                         }
-
-                        self.stdout.write_fmt(format_args!(
-                            "{}{}{}{:2}|{}",
-                            color::Fg(color::Reset),
-                            cursor::Goto(1, output_line),
-                            clear::CurrentLine,
-                            line.line_number(),
-                            &escaped
-                        ))
                     },
                     None => { 
                         self.stdout.write_fmt(format_args!(
@@ -243,9 +311,9 @@ impl TerminalDisplay {
                             cursor::Goto(1, output_line),
                             clear::CurrentLine,
                             self.top_line.saturating_add(output_line as usize - 1)
-                        ))
+                        )).expect("Unable to write to main text area");
                     }
-                }.expect("Unable to write to main text area");
+                };
                 output_line += 1;
             }
 
@@ -282,7 +350,7 @@ impl TerminalDisplay {
 
                 let display_cursor_ln =
                     (1 + (cursor_pos.line_number - self.top_line) as u16).clamp(1, text_view_height);
-                let display_cursor_col = (1 + cursor_pos.colmun as u16 + 3).clamp(1, w);
+                let display_cursor_col = (1 + cursor_pos.colmun as u16 + 10).clamp(1, w);
 
                 self.stdout.write_fmt(format_args!(
                     "{}",

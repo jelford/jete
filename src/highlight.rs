@@ -1,7 +1,7 @@
-use std::{collections::BTreeMap, thread, time::Duration};
+use std::{collections::{BTreeMap, HashMap, HashSet, hash_map::DefaultHasher}, fmt::{Display, Formatter}, hash::{self, Hash, Hasher}, thread, time::Duration};
 
 
-
+use std::sync::Arc;
 use crossbeam::channel;
 use syntect::{highlighting::{ThemeSet}, parsing::{SyntaxSet}};
 
@@ -11,16 +11,16 @@ use crate::text::{Rev, LineId};
 
 #[derive(Debug, Clone)]
 pub struct HighlightState {
-    highlighted_lines: BTreeMap<LineId, HighlightedLine>,
+    highlighted_lines: HashMap<LineId, Arc<HighlightedLine>>,
 }
 
 impl HighlightState {
-    pub fn highlighted_line(&self, line: &LineView) -> Option<&str> {
+    pub fn highlighted_line(&self, line: &LineView) -> Option<Arc<HighlightedLine>> {
         let ln = line.id();
         if let Some(hl_line) = self.highlighted_lines.get(&ln) {
             let rev = line.rev();
-            if hl_line.highlighted_rev >= rev {
-                return Some(&hl_line.highlighted_text)
+            if hl_line.highlighted_line_rev >= rev {
+                return Some(hl_line.clone());
             }
         }
 
@@ -32,10 +32,56 @@ impl HighlightState {
     }
 }
 
-#[derive(Debug, Clone)]
-struct HighlightedLine {
-    highlighted_text: String,
-    highlighted_rev: Rev,
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+pub enum HighlightRev {
+    Rev {id: u64},
+    None,
+}
+
+
+
+impl HighlightRev {
+    fn from(highlighter_output: &str, line_id: LineId) -> Self {
+        let mut h = DefaultHasher::new();
+        highlighter_output.hash(&mut h);
+        line_id.hash(&mut h);
+        HighlightRev::Rev {
+            id: h.finish()
+        }
+    }
+}
+
+impl Display for HighlightRev {
+    fn fmt(&self, fmt: &mut Formatter) -> std::fmt::Result {
+        match self {
+            HighlightRev::None => (-1).fmt(fmt),
+            HighlightRev::Rev { id } => (id%100).fmt(fmt)
+        }
+    }
+}
+
+impl Default for HighlightRev {
+    fn default() -> Self {
+        HighlightRev::None
+    }
+}
+
+
+#[derive(Debug)]
+pub struct HighlightedLine {
+    highlighted_text: Arc<String>,
+    highlighted_line_rev: Rev,
+    highlight_rev: HighlightRev,
+}
+
+impl HighlightedLine {
+    pub fn highlighted_text(&self) -> Arc<String> {
+        self.highlighted_text.clone()
+    }
+
+    pub fn rev(&self) -> HighlightRev {
+        self.highlight_rev
+    }
 }
 
 pub fn spawn_highlighter(mut hub: pubsub::Hub) {
@@ -55,36 +101,46 @@ pub fn spawn_highlighter(mut hub: pubsub::Hub) {
         let syntax = syntax_set.find_syntax_by_extension("rs").unwrap();
 
         log::debug!("setting up highlight thread");
+
+        let mut prev_hl_state = HighlightState {
+            highlighted_lines: HashMap::new()
+        };
         
         while let Ok(text) = r.recv() {
             log::debug!("Beginning highlight pass");
             
-            let mut highlighted_lines = BTreeMap::new();
-            
+            let mut new_state = prev_hl_state.clone();
 
             let mut h = syntect::easy::HighlightLines::new(syntax, theme);
 
+            let mut seen_lines = HashSet::with_capacity(prev_hl_state.highlighted_lines.len());
+
             for line in text.iter_lines() {
                 let line_text = line.content_str();
-                
-                
+                seen_lines.insert(line.id());
                 let ranges = h.highlight(&line_text, &syntax_set);
                 let escaped = syntect::util::as_24_bit_terminal_escaped(&ranges[..], false);
+                let highlight_rev = HighlightRev::from(&escaped, line.id());
 
-                highlighted_lines.insert(line.id(), HighlightedLine {
-                    highlighted_text: escaped,
-                    highlighted_rev: line.rev(),
-                });
+                new_state.highlighted_lines.insert(line.id(), Arc::new(HighlightedLine {
+                    highlighted_text: Arc::new(escaped),
+                    highlighted_line_rev: line.max_rev_before(),
+                    highlight_rev,
+                }));
+
+                if line.line_number() > 0 && line.line_number() % 20 == 0 {
+                    let _ = hub.send(HighlightState::topic(), new_state.clone());
+                }
             }
-            let new_state = HighlightState {
-                highlighted_lines: highlighted_lines,
-            };
-
-            if let Err(_) = hub.send(HighlightState::topic(), new_state) {
+            
+            if let Err(_) = hub.send(HighlightState::topic(), new_state.clone()) {
                 log::debug!("Nobody is listening for highlight updates");
             }
             
             log::debug!("Highlight pass finished");
+
+            prev_hl_state = new_state;
+            prev_hl_state.highlighted_lines.retain(|lid, _| seen_lines.contains(lid));
         }
     }).expect("Initializing highlighter");
 
