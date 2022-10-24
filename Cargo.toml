@@ -14,7 +14,7 @@ license = "GPL-3.0-or-later"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-termion = "1.5"
+termion = "2.0"
 crossbeam = "0.8"
 syntect = { version = "4.7", default-features = false, features = ["default-fancy"] }
 log = "0.4"
